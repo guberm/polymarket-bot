@@ -135,27 +135,30 @@ public sealed class Portfolio
     {
         if (HasPosition(signal.Market.ConditionId))
         {
-            _log.LogDebug("Already positioned in {Question}", Truncate(signal.Market.Question, 40));
+            _log.LogInformation("Risk BLOCK: already positioned in {Question}", Truncate(signal.Market.Question, 40));
             return false;
         }
 
         if (Positions.Count >= _config.MaxConcurrentPositions)
         {
-            _log.LogDebug("Max concurrent positions reached");
+            _log.LogInformation("Risk BLOCK: max positions ({Max}) reached", _config.MaxConcurrentPositions);
             return false;
         }
 
         var newExposure = TotalExposure() + signal.PositionSizeUsd;
-        if (newExposure > Bankroll * _config.MaxTotalExposurePct)
+        var maxAllowed = Bankroll * _config.MaxTotalExposurePct;
+        if (newExposure > maxAllowed)
         {
-            _log.LogDebug("Total exposure limit exceeded");
+            _log.LogInformation("Risk BLOCK: total exposure ${New:F2} > limit ${Limit:F2}", newExposure, maxAllowed);
             return false;
         }
 
         var catExp = CategoryExposure(signal.Market.Category) + signal.PositionSizeUsd;
-        if (catExp > Bankroll * _config.MaxCategoryExposurePct)
+        var catLimit = Bankroll * _config.MaxCategoryExposurePct;
+        if (catExp > catLimit)
         {
-            _log.LogDebug("Category '{Category}' exposure limit exceeded", signal.Market.Category);
+            _log.LogInformation("Risk BLOCK: '{Category}' exposure ${Exp:F2} > limit ${Limit:F2}",
+                signal.Market.Category, catExp, catLimit);
             return false;
         }
 
@@ -164,7 +167,8 @@ public sealed class Portfolio
         var dailyPnl = portfolioValue - DailyStartValue;
         if (dailyPnl < 0 && Math.Abs(dailyPnl) > DailyStartValue * _config.DailyStopLossPct)
         {
-            _log.LogWarning("Daily stop loss triggered");
+            _log.LogWarning("HALT: Daily stop loss triggered (PnL=${Pnl:+0.00;-0.00}, limit={Limit:P0})",
+                dailyPnl, _config.DailyStopLossPct);
             IsHalted = true;
             return false;
         }
@@ -175,7 +179,8 @@ public sealed class Portfolio
             var drawdown = (HighWaterMark - portfolioValue) / HighWaterMark;
             if (drawdown > _config.MaxDrawdownPct)
             {
-                _log.LogWarning("Max drawdown {Drawdown:P1} exceeded", drawdown);
+                _log.LogWarning("HALT: Max drawdown {Drawdown:P1} exceeded (limit={Limit:P0})",
+                    drawdown, _config.MaxDrawdownPct);
                 IsHalted = true;
                 return false;
             }
@@ -184,7 +189,7 @@ public sealed class Portfolio
         // Agent death
         if (Bankroll <= 0)
         {
-            _log.LogWarning("Bankroll depleted — agent is dead");
+            _log.LogWarning("HALT: Bankroll depleted — agent is dead");
             IsHalted = true;
             return false;
         }

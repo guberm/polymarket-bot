@@ -112,28 +112,30 @@ class Portfolio:
     def check_risk(self, signal: Signal) -> bool:
         """Return True if the trade passes all risk limits."""
         if self.has_position(signal.market.condition_id):
-            log.debug(f"Already positioned in {signal.market.question[:40]}")
+            log.info(f"Risk BLOCK: already positioned in {signal.market.question[:40]}")
             return False
 
         if len(self.positions) >= self.config.max_concurrent_positions:
-            log.debug("Max concurrent positions reached")
+            log.info(f"Risk BLOCK: max positions ({self.config.max_concurrent_positions}) reached")
             return False
 
         new_exposure = self.total_exposure() + signal.position_size_usd
-        if new_exposure > self.bankroll * self.config.max_total_exposure_pct:
-            log.debug("Total exposure limit exceeded")
+        max_allowed = self.bankroll * self.config.max_total_exposure_pct
+        if new_exposure > max_allowed:
+            log.info(f"Risk BLOCK: total exposure ${new_exposure:.2f} > limit ${max_allowed:.2f}")
             return False
 
         cat_exp = self.category_exposure(signal.market.category) + signal.position_size_usd
-        if cat_exp > self.bankroll * self.config.max_category_exposure_pct:
-            log.debug(f"Category '{signal.market.category}' exposure limit exceeded")
+        cat_limit = self.bankroll * self.config.max_category_exposure_pct
+        if cat_exp > cat_limit:
+            log.info(f"Risk BLOCK: '{signal.market.category}' exposure ${cat_exp:.2f} > limit ${cat_limit:.2f}")
             return False
 
         # Daily stop loss (include open position value — deployed capital isn't lost)
         portfolio_value = self.bankroll + self.total_exposure()
         daily_pnl = portfolio_value - self.daily_start_value
         if daily_pnl < 0 and abs(daily_pnl) > self.daily_start_value * self.config.daily_stop_loss_pct:
-            log.warning("Daily stop loss triggered")
+            log.warning(f"HALT: Daily stop loss triggered (PnL=${daily_pnl:+.2f}, limit={self.config.daily_stop_loss_pct:.0%})")
             self.is_halted = True
             return False
 
@@ -141,13 +143,13 @@ class Portfolio:
         if self.high_water_mark > 0:
             drawdown = (self.high_water_mark - portfolio_value) / self.high_water_mark
             if drawdown > self.config.max_drawdown_pct:
-                log.warning(f"Max drawdown {drawdown:.1%} exceeded")
+                log.warning(f"HALT: Max drawdown {drawdown:.1%} exceeded (limit={self.config.max_drawdown_pct:.0%})")
                 self.is_halted = True
                 return False
 
         # Agent death condition
         if self.bankroll <= 0:
-            log.warning("Bankroll depleted — agent is dead")
+            log.warning("HALT: Bankroll depleted — agent is dead")
             self.is_halted = True
             return False
 
