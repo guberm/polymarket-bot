@@ -2,6 +2,8 @@
 
 Autonomous trading agent for [Polymarket](https://polymarket.com) prediction markets. Scans hundreds of binary markets, estimates fair probabilities using a Claude ensemble, finds mispricing, and executes trades with Kelly criterion sizing.
 
+Available in **Python** and **.NET 8** — both implementations share the same logic, config, and data formats.
+
 **The agent pays for its own inference.** Claude API costs are deducted from the bankroll each cycle. If the bankroll hits $0, the agent dies.
 
 ## How It Works
@@ -21,26 +23,41 @@ Every 10 minutes:
 
 ## Quick Start
 
-```bash
-# Clone
-git clone https://github.com/guberm/polymarket-bot.git
-cd polymarket-bot
+### Python
 
-# Install dependencies
+```bash
+git clone https://github.com/guberm/polymarket-bot.git
+cd polymarket-bot/python
+
 pip install -r requirements.txt
 
-# Run in paper trading mode (no real money)
+# Paper trading (default)
 ANTHROPIC_API_KEY=sk-... python main.py
 
 # Verbose logging
 ANTHROPIC_API_KEY=sk-... python main.py --verbose
 ```
 
+### .NET
+
+```bash
+git clone https://github.com/guberm/polymarket-bot.git
+cd polymarket-bot/dotnet/PolymarketBot
+
+# Paper trading (default)
+ANTHROPIC_API_KEY=sk-... dotnet run
+
+# Verbose logging
+ANTHROPIC_API_KEY=sk-... dotnet run -- --verbose
+```
+
 ## Live Trading
 
 > **Warning:** Live trading uses real money. Start with paper trading to validate signals.
 
+### Python
 ```bash
+cd python
 ANTHROPIC_API_KEY=sk-... \
 POLYMARKET_PRIVATE_KEY=0x... \
 POLYMARKET_FUNDER_ADDRESS=0x... \
@@ -48,11 +65,21 @@ LIVE_TRADING=true \
 python main.py
 ```
 
-Requires a funded Polymarket wallet on Polygon (chain ID 137) and `py-clob-client`.
+### .NET
+```bash
+cd dotnet/PolymarketBot
+ANTHROPIC_API_KEY=sk-... \
+POLYMARKET_PRIVATE_KEY=0x... \
+POLYMARKET_FUNDER_ADDRESS=0x... \
+LIVE_TRADING=true \
+dotnet run
+```
+
+Requires a funded Polymarket wallet on Polygon (chain ID 137).
 
 ## Configuration
 
-All parameters are set via environment variables. Defaults are tuned for conservative trading.
+All parameters are set via environment variables. Both implementations use the same env vars.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -75,19 +102,32 @@ All parameters are set via environment variables. Defaults are tuned for conserv
 | `POLYMARKET_PRIVATE_KEY` | — | Wallet private key (live trading) |
 | `POLYMARKET_FUNDER_ADDRESS` | — | Funder address (live trading) |
 
-## Architecture
+## Project Structure
 
 ```
-main.py            → Orchestration loop
-config.py          → BotConfig dataclass (all env vars)
-models.py          → Domain models (MarketInfo, Estimate, Signal, Position, Trade)
-market_scanner.py  → Gamma API integration, market filtering
-estimator.py       → Claude ensemble estimation (trimmed mean)
-portfolio.py       → Kelly sizing, risk management, API cost tracking
-trader.py          → PaperTrader + LiveTrader (py-clob-client)
-persistence.py     → JSON state + JSONL trade log
-logger_setup.py    → Colored console + JSON file logging
-data/              → Runtime state (portfolio.json, trades.jsonl, bot.log)
+python/                        ← Python implementation
+  main.py                        Orchestration loop
+  config.py                      BotConfig dataclass (all env vars)
+  models.py                      Domain models (MarketInfo, Estimate, Signal, Position, Trade)
+  market_scanner.py              Gamma API integration, market filtering
+  estimator.py                   Claude ensemble estimation (trimmed mean)
+  portfolio.py                   Kelly sizing, risk management, API cost tracking
+  trader.py                      PaperTrader + LiveTrader (py-clob-client)
+  persistence.py                 JSON state + JSONL trade log
+  logger_setup.py                Colored console + JSON file logging
+  requirements.txt               Python dependencies
+
+dotnet/PolymarketBot/          ← .NET 8 implementation
+  Program.cs                     Orchestration loop (async)
+  BotConfig.cs                   Config from env vars
+  Models/                        Domain models
+  Services/                      MarketScanner, Estimator, Portfolio, Traders, Persistence
+  PolymarketBot.csproj           Project file
+
+data/                          ← Runtime state (both implementations)
+  portfolio.json                 Current portfolio state (atomically written)
+  trades.jsonl                   Append-only trade history
+  bot.log                        Structured JSON logs
 ```
 
 ### Estimation
@@ -138,12 +178,6 @@ Five layers of protection:
 ### Agent Survival
 
 API costs (Claude inference) are deducted from the bankroll every cycle. The agent must generate enough edge to cover its own operating costs. If the bankroll reaches $0 — from trading losses or API bills — `is_halted` flips to `true` and the bot stops.
-
-## Data & Logs
-
-- `data/portfolio.json` — Current portfolio state (atomically written)
-- `data/trades.jsonl` — Append-only trade history
-- `data/bot.log` — Structured JSON logs
 
 ## Disclaimer
 

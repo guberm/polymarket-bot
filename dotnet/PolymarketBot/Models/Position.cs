@@ -1,0 +1,17 @@
+namespace PolymarketBot.Models;
+
+public sealed class Position
+{
+    public required string ConditionId { get; init; }
+    public required string Question { get; init; }
+    public Side Side { get; init; }
+    public required string TokenId { get; init; }
+    public double EntryPrice { get; init; }
+    public double SizeUsd { get; init; }
+    public double Shares { get; init; }
+    public double CurrentPrice { get; set; }
+    public double UnrealizedPnl { get; set; }
+    public string Category { get; init; } = "other";
+    public double OpenedAt { get; init; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+    public string? OrderId { get; init; }
+}

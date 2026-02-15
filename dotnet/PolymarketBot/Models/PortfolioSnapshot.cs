@@ -1,0 +1,14 @@
+namespace PolymarketBot.Models;
+
+public sealed class PortfolioSnapshot
+{
+    public double Bankroll { get; init; }
+    public double InitialBankroll { get; init; }
+    public required List<Position> Positions { get; init; }
+    public double HighWaterMark { get; init; }
+    public double DailyStartValue { get; init; }
+    public double TotalRealizedPnl { get; init; }
+    public int TotalTrades { get; init; }
+    public bool IsHalted { get; init; }
+    public double LastUpdated { get; init; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+}

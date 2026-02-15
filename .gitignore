@@ -9,6 +9,10 @@ __pycache__/
 venv/
 env/
 
+# .NET
+bin/
+obj/
+
 # Environment and secrets
 .env
 *.key
