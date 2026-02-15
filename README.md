@@ -94,6 +94,37 @@ data/              → Runtime state (portfolio.json, trades.jsonl, bot.log)
 
 The estimator makes N independent Claude calls per market at temperature 0.7. Each call returns a probability estimate. The trimmed mean (dropping highest and lowest when N≥4) becomes the fair value. The current market price is deliberately **not shown** to Claude to prevent anchoring.
 
+### Kelly Criterion Sizing
+
+The bot uses the [Kelly criterion](https://en.wikipedia.org/wiki/Kelly_criterion) to determine optimal position sizes. The Kelly formula maximizes long-run growth rate by betting more when the edge is larger and the odds are better.
+
+**Formula:**
+
+```
+f* = (b × p - q) / b
+```
+
+Where:
+- `f*` = fraction of bankroll to wager
+- `b` = net odds (payout per $1 risked). For a market priced at `m`, `b = (1 - m) / m`
+- `p` = estimated true probability (from Claude ensemble)
+- `q` = 1 - p (probability of losing)
+
+**Example:** A market is trading at $0.40 (implied 40% chance). Claude estimates the true probability is 55%.
+
+```
+b = (1 - 0.40) / 0.40 = 1.5        (risk $1 to win $1.50)
+f* = (1.5 × 0.55 - 0.45) / 1.5     = 0.25    (full Kelly says bet 25%)
+```
+
+**Why fractional Kelly?** Full Kelly is mathematically optimal but extremely volatile — a small estimation error can lead to massive drawdowns. The bot defaults to **quarter Kelly** (`KELLY_FRACTION=0.25`), betting 25% of what full Kelly recommends. This sacrifices ~25% of the theoretical growth rate in exchange for ~75% less variance. The resulting bet in the example above:
+
+```
+Actual bet = 0.25 × 25% = 6.25% of bankroll
+```
+
+This is then capped by `MAX_POSITION_PCT` (default 6%) and must pass all risk checks before execution.
+
 ### Risk Management
 
 Five layers of protection:
