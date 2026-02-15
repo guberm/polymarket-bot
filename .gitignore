@@ -1,0 +1,21 @@
+# Data and logs
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Environment and secrets
+.env
+*.key
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
