@@ -37,3 +37,6 @@ Desktop.ini
 
 # Solution file (local)
 *.sln
+
+# Local instructions with credentials
+INSTRUCTIONS.md
