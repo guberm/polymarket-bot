@@ -1,5 +1,7 @@
-# Data and logs
+# Data and logs (portfolio state, trade history, logs)
 data/
+python/data/
+dotnet/PolymarketBot/data/
 
 # Python
 __pycache__/
@@ -12,10 +14,14 @@ env/
 # .NET
 bin/
 obj/
+*.vs/
+*.user
+*.suo
 
 # Environment and secrets
 .env
 *.key
+*.pem
 
 # IDE
 .vscode/
@@ -23,3 +29,11 @@ obj/
 
 # Claude Code
 .claude/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Solution file (local)
+*.sln

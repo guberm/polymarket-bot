@@ -13,8 +13,8 @@ Every 10 minutes:
   1. Scan all active Polymarket markets (Gamma API)
   2. Filter by liquidity, volume, and time to resolution
   3. Estimate fair probability for each market (N independent Claude calls → trimmed mean)
-  4. Find mispricing > 8% between estimate and market price
-  5. Size position using fractional Kelly criterion (max 6% of bankroll)
+  4. Find mispricing > 5% between estimate and market price
+  5. Size position using fractional Kelly criterion (max 15% of bankroll)
   6. Check risk limits (per-position, per-category, total exposure, drawdown)
   7. Execute trade (paper or live)
   8. Deduct API costs from bankroll
@@ -75,7 +75,21 @@ LIVE_TRADING=true \
 dotnet run
 ```
 
-Requires a funded Polymarket wallet on Polygon (chain ID 137).
+Requires a funded Polymarket wallet on Polygon (chain ID 137). For Gnosis Safe wallets, set `POLYMARKET_SIGNATURE_TYPE=1`.
+
+## CLI Arguments
+
+Risk parameters can also be passed as command-line arguments (overriding env vars):
+
+```bash
+# Python
+python main.py --max-position-pct 0.15 --max-total-exposure-pct 0.90 --daily-stop-loss-pct 0.20
+
+# .NET
+dotnet run -- --max-position-pct 0.15 --max-total-exposure-pct 0.90 --daily-stop-loss-pct 0.20
+```
+
+Available CLI args: `--max-position-pct`, `--max-total-exposure-pct`, `--max-category-exposure-pct`, `--daily-stop-loss-pct`, `--max-drawdown-pct`, `--max-concurrent-positions`, `--verbose`.
 
 ## Configuration
 
@@ -86,21 +100,22 @@ All parameters are set via environment variables. Both implementations use the s
 | `ANTHROPIC_API_KEY` | — | Required. Claude API key |
 | `LIVE_TRADING` | `false` | Set `true` for real orders |
 | `INITIAL_BANKROLL` | `10000` | Starting capital in USD |
-| `MIN_EDGE` | `0.08` | Minimum mispricing to trade (8%) |
+| `MIN_EDGE` | `0.05` | Minimum mispricing to trade (5%) |
 | `SCAN_INTERVAL_MINUTES` | `10` | Time between scan cycles |
 | `MARKETS_PER_CYCLE` | `30` | Max markets to evaluate per cycle |
 | `ENSEMBLE_SIZE` | `5` | Claude calls per market estimate |
 | `ENSEMBLE_TEMPERATURE` | `0.7` | Temperature for ensemble diversity |
 | `CLAUDE_MODEL` | `claude-sonnet-4-20250514` | Model for estimation |
 | `KELLY_FRACTION` | `0.25` | Fractional Kelly (0.25 = quarter Kelly) |
-| `MAX_POSITION_PCT` | `0.06` | Max 6% of bankroll per position |
-| `MAX_TOTAL_EXPOSURE_PCT` | `0.50` | Max 50% of bankroll in open positions |
-| `MAX_CATEGORY_EXPOSURE_PCT` | `0.20` | Max 20% per category |
-| `DAILY_STOP_LOSS_PCT` | `0.03` | Halt if daily loss exceeds 3% |
-| `MAX_DRAWDOWN_PCT` | `0.15` | Halt if drawdown exceeds 15% |
+| `MAX_POSITION_PCT` | `0.15` | Max 15% of bankroll per position |
+| `MAX_TOTAL_EXPOSURE_PCT` | `0.90` | Max 90% of bankroll in open positions |
+| `MAX_CATEGORY_EXPOSURE_PCT` | `0.50` | Max 50% per category |
+| `DAILY_STOP_LOSS_PCT` | `0.20` | Halt if daily loss exceeds 20% |
+| `MAX_DRAWDOWN_PCT` | `0.50` | Halt if drawdown exceeds 50% |
 | `MAX_CONCURRENT_POSITIONS` | `20` | Max open positions |
 | `POLYMARKET_PRIVATE_KEY` | — | Wallet private key (live trading) |
 | `POLYMARKET_FUNDER_ADDRESS` | — | Funder address (live trading) |
+| `POLYMARKET_SIGNATURE_TYPE` | `0` | Signature type (0=EOA, 1=GNOSIS_SAFE) |
 
 ## Project Structure
 
@@ -163,17 +178,19 @@ f* = (1.5 × 0.55 - 0.45) / 1.5     = 0.25    (full Kelly says bet 25%)
 Actual bet = 0.25 × 25% = 6.25% of bankroll
 ```
 
-This is then capped by `MAX_POSITION_PCT` (default 6%) and must pass all risk checks before execution.
+This is then capped by `MAX_POSITION_PCT` (default 15%) and must pass all risk checks before execution.
 
 ### Risk Management
 
 Five layers of protection:
 
-1. **Per-position cap** — max 6% of bankroll on any single market
-2. **Per-category cap** — max 20% exposure in politics, sports, crypto, etc.
-3. **Total exposure cap** — max 50% of bankroll in open positions
-4. **Daily stop-loss** — halt trading if daily losses exceed 3%
-5. **Max drawdown** — halt if drawdown from peak exceeds 15%
+1. **Per-position cap** — max 15% of bankroll on any single market
+2. **Per-category cap** — max 50% exposure in politics, sports, crypto, etc.
+3. **Total exposure cap** — max 90% of bankroll in open positions
+4. **Daily stop-loss** — halt trading if daily losses exceed 20%
+5. **Max drawdown** — halt if drawdown from peak exceeds 50%
+
+Daily stop-loss and drawdown are calculated against **portfolio value** (bankroll + open position value), not just bankroll alone. This prevents false halts when capital is deployed in positions.
 
 ### Agent Survival
 

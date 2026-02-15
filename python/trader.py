@@ -66,12 +66,22 @@ class LiveTrader:
 
         self.client = ClobClient(
             "https://clob.polymarket.com",
-            key=config.polymarket_private_key,
+            key=config.polymarket_private_key or None,
             chain_id=config.polymarket_chain_id,
             signature_type=config.polymarket_signature_type,
             funder=config.polymarket_funder_address or None,
         )
-        self.client.set_api_creds(self.client.create_or_derive_api_creds())
+
+        # Use pre-generated CLOB API credentials if provided, otherwise derive
+        if config.polymarket_api_key and config.polymarket_api_secret:
+            from py_clob_client.clob_types import ApiCreds
+            self.client.set_api_creds(ApiCreds(
+                api_key=config.polymarket_api_key,
+                api_secret=config.polymarket_api_secret,
+                api_passphrase=config.polymarket_api_passphrase,
+            ))
+        else:
+            self.client.set_api_creds(self.client.create_or_derive_api_creds())
         log.info("Live CLOB client initialized")
 
     def execute(self, signal: Signal, portfolio: Portfolio) -> Optional[Trade]:

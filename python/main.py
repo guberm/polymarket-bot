@@ -27,9 +27,28 @@ log = logging.getLogger("bot.main")
 def main():
     parser = argparse.ArgumentParser(description="Polymarket trading bot")
     parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
+    parser.add_argument("--max-position-pct", type=float, help="Max %% of bankroll per position (e.g. 0.15)")
+    parser.add_argument("--max-total-exposure-pct", type=float, help="Max %% of bankroll in open positions (e.g. 0.90)")
+    parser.add_argument("--max-category-exposure-pct", type=float, help="Max %% per category (e.g. 0.50)")
+    parser.add_argument("--daily-stop-loss-pct", type=float, help="Halt if daily loss exceeds this %% (e.g. 0.20)")
+    parser.add_argument("--max-drawdown-pct", type=float, help="Halt if drawdown exceeds this %% (e.g. 0.50)")
+    parser.add_argument("--max-concurrent-positions", type=int, help="Max open positions (e.g. 20)")
     args = parser.parse_args()
 
     config = BotConfig.from_env()
+    # CLI args override env vars
+    if args.max_position_pct is not None:
+        config.max_position_pct = args.max_position_pct
+    if args.max_total_exposure_pct is not None:
+        config.max_total_exposure_pct = args.max_total_exposure_pct
+    if args.max_category_exposure_pct is not None:
+        config.max_category_exposure_pct = args.max_category_exposure_pct
+    if args.daily_stop_loss_pct is not None:
+        config.daily_stop_loss_pct = args.daily_stop_loss_pct
+    if args.max_drawdown_pct is not None:
+        config.max_drawdown_pct = args.max_drawdown_pct
+    if args.max_concurrent_positions is not None:
+        config.max_concurrent_positions = args.max_concurrent_positions
     setup_logging(config.data_dir, verbose=args.verbose)
 
     mode = "LIVE" if config.live_trading else "PAPER"
@@ -57,8 +76,8 @@ def main():
     estimator = Estimator(config)
 
     if config.live_trading:
-        if not config.polymarket_private_key:
-            log.error("POLYMARKET_PRIVATE_KEY not set for live trading")
+        if not config.polymarket_private_key and not config.polymarket_api_key:
+            log.error("POLYMARKET_PRIVATE_KEY or POLYMARKET_API_KEY required for live trading")
             sys.exit(1)
         trader = LiveTrader(config)
     else:

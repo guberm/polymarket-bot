@@ -23,7 +23,10 @@ ANTHROPIC_API_KEY=sk-... python main.py
 ANTHROPIC_API_KEY=sk-... python main.py --verbose
 
 # Live trading (requires funded Polymarket wallet)
-ANTHROPIC_API_KEY=sk-... POLYMARKET_PRIVATE_KEY=0x... LIVE_TRADING=true python main.py
+ANTHROPIC_API_KEY=sk-... POLYMARKET_PRIVATE_KEY=0x... POLYMARKET_FUNDER_ADDRESS=0x... POLYMARKET_SIGNATURE_TYPE=1 LIVE_TRADING=true python main.py
+
+# CLI risk overrides
+python main.py --max-position-pct 0.15 --max-total-exposure-pct 0.90 --daily-stop-loss-pct 0.20
 ```
 
 Python 3.10+ required. Dependencies: `requests`, `anthropic`, `py-clob-client` (live trading only).
@@ -40,7 +43,10 @@ ANTHROPIC_API_KEY=sk-... dotnet run
 ANTHROPIC_API_KEY=sk-... dotnet run -- --verbose
 
 # Live trading
-ANTHROPIC_API_KEY=sk-... POLYMARKET_PRIVATE_KEY=0x... LIVE_TRADING=true dotnet run
+ANTHROPIC_API_KEY=sk-... POLYMARKET_PRIVATE_KEY=0x... POLYMARKET_FUNDER_ADDRESS=0x... POLYMARKET_SIGNATURE_TYPE=1 LIVE_TRADING=true dotnet run
+
+# CLI risk overrides
+dotnet run -- --max-position-pct 0.15 --max-total-exposure-pct 0.90 --daily-stop-loss-pct 0.20
 ```
 
 .NET 8 required. No external NuGet packages beyond `Microsoft.Extensions.Logging`.
@@ -48,9 +54,10 @@ ANTHROPIC_API_KEY=sk-... POLYMARKET_PRIVATE_KEY=0x... LIVE_TRADING=true dotnet r
 **All config via env vars** — see `BotConfig.from_env()` in `python/config.py` or `BotConfig.FromEnv()` in `dotnet/PolymarketBot/BotConfig.cs`. Key ones:
 - `ANTHROPIC_API_KEY` (required)
 - `POLYMARKET_PRIVATE_KEY`, `POLYMARKET_FUNDER_ADDRESS` (live trading)
+- `POLYMARKET_SIGNATURE_TYPE` (0=EOA, 1=GNOSIS_SAFE; default: 0)
 - `LIVE_TRADING=true` (default: false/paper)
 - `INITIAL_BANKROLL` (default: 10000)
-- `MIN_EDGE` (default: 0.08 = 8%)
+- `MIN_EDGE` (default: 0.05 = 5%)
 - `SCAN_INTERVAL_MINUTES` (default: 10)
 
 No test suite or linter configured.
@@ -110,7 +117,9 @@ dotnet/PolymarketBot/
 - **Estimator prompt** asks Claude to output `{"probability": 0.XX, "reasoning": "..."}` — does NOT show current market price to avoid anchoring
 - **Keyword-based categorization** (`CATEGORY_KEYWORDS` in scanner) — used for per-category exposure limits
 - **Gamma API returns JSON-encoded strings** inside JSON for `outcomes`, `outcomePrices`, and `clobTokenIds` — parsing handles both string and list forms
-- **Risk is layered:** per-position (6%), per-category (20%), total exposure (50%), daily stop-loss (3%), max drawdown (15%)
+- **Risk is layered:** per-position (15%), per-category (50%), total exposure (90%), daily stop-loss (20%), max drawdown (50%)
+- **Portfolio value** for stop-loss/drawdown = bankroll + total open position value (deployed capital isn't a loss)
+- **CLI args** override env vars for risk params: `--max-position-pct`, `--max-total-exposure-pct`, `--max-category-exposure-pct`, `--daily-stop-loss-pct`, `--max-drawdown-pct`, `--max-concurrent-positions`
 - **Agent pays for inference** — API token costs are deducted from bankroll each cycle
 - **Atomic persistence** — portfolio.json written via tmp+rename to avoid corruption on crash
 - **Polygon chain** (chain ID 137) for Polymarket settlement

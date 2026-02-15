@@ -28,11 +28,11 @@ class BotConfig:
     min_trade_usd: float = 1.0
 
     # Risk
-    max_position_pct: float = 0.06  # Max 6% of bankroll per position
-    max_total_exposure_pct: float = 0.50
-    max_category_exposure_pct: float = 0.20
-    daily_stop_loss_pct: float = 0.03
-    max_drawdown_pct: float = 0.15
+    max_position_pct: float = 0.15  # Max 15% of bankroll per position
+    max_total_exposure_pct: float = 0.90  # Max 90% of bankroll in open positions
+    max_category_exposure_pct: float = 0.50
+    daily_stop_loss_pct: float = 0.20
+    max_drawdown_pct: float = 0.50
     max_concurrent_positions: int = 20
 
     # Capital
@@ -44,6 +44,11 @@ class BotConfig:
     polymarket_funder_address: str = ""
     polymarket_chain_id: int = 137
     polymarket_signature_type: int = 0
+
+    # CLOB API credentials (pre-generated, avoids deriving from private key)
+    polymarket_api_key: str = ""
+    polymarket_api_secret: str = ""
+    polymarket_api_passphrase: str = ""
 
     # Persistence
     data_dir: str = "data"
@@ -63,11 +68,11 @@ class BotConfig:
             ensemble_temperature=float(os.getenv("ENSEMBLE_TEMPERATURE", "0.7")),
             kelly_fraction=float(os.getenv("KELLY_FRACTION", "0.25")),
             min_edge=float(os.getenv("MIN_EDGE", "0.05")),
-            max_position_pct=float(os.getenv("MAX_POSITION_PCT", "0.05")),
-            max_total_exposure_pct=float(os.getenv("MAX_TOTAL_EXPOSURE_PCT", "0.50")),
-            max_category_exposure_pct=float(os.getenv("MAX_CATEGORY_EXPOSURE_PCT", "0.20")),
-            daily_stop_loss_pct=float(os.getenv("DAILY_STOP_LOSS_PCT", "0.03")),
-            max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT", "0.15")),
+            max_position_pct=float(os.getenv("MAX_POSITION_PCT", "0.15")),
+            max_total_exposure_pct=float(os.getenv("MAX_TOTAL_EXPOSURE_PCT", "0.90")),
+            max_category_exposure_pct=float(os.getenv("MAX_CATEGORY_EXPOSURE_PCT", "0.50")),
+            daily_stop_loss_pct=float(os.getenv("DAILY_STOP_LOSS_PCT", "0.20")),
+            max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT", "0.50")),
             max_concurrent_positions=int(os.getenv("MAX_CONCURRENT_POSITIONS", "20")),
             initial_bankroll=float(os.getenv("INITIAL_BANKROLL", "10000")),
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
@@ -75,5 +80,8 @@ class BotConfig:
             polymarket_funder_address=os.getenv("POLYMARKET_FUNDER_ADDRESS", ""),
             polymarket_chain_id=int(os.getenv("POLYMARKET_CHAIN_ID", "137")),
             polymarket_signature_type=int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "0")),
+            polymarket_api_key=os.getenv("POLYMARKET_API_KEY", ""),
+            polymarket_api_secret=os.getenv("POLYMARKET_API_SECRET", ""),
+            polymarket_api_passphrase=os.getenv("POLYMARKET_API_PASSPHRASE", ""),
             data_dir=os.getenv("DATA_DIR", "data"),
         )

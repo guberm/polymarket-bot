@@ -10,6 +10,32 @@ var verbose = args.Contains("--verbose") || args.Contains("-v");
 
 var config = BotConfig.FromEnv();
 
+// CLI args override env vars
+static double? ParseDoubleArg(string[] a, string name)
+{
+    var idx = Array.IndexOf(a, name);
+    return idx >= 0 && idx + 1 < a.Length && double.TryParse(a[idx + 1], out var v) ? v : null;
+}
+
+static int? ParseIntArg(string[] a, string name)
+{
+    var idx = Array.IndexOf(a, name);
+    return idx >= 0 && idx + 1 < a.Length && int.TryParse(a[idx + 1], out var v) ? v : null;
+}
+
+if (ParseDoubleArg(args, "--max-position-pct") is { } maxPosPct)
+    config.MaxPositionPct = maxPosPct;
+if (ParseDoubleArg(args, "--max-total-exposure-pct") is { } maxExpPct)
+    config.MaxTotalExposurePct = maxExpPct;
+if (ParseDoubleArg(args, "--max-category-exposure-pct") is { } maxCatPct)
+    config.MaxCategoryExposurePct = maxCatPct;
+if (ParseDoubleArg(args, "--daily-stop-loss-pct") is { } dailySl)
+    config.DailyStopLossPct = dailySl;
+if (ParseDoubleArg(args, "--max-drawdown-pct") is { } maxDd)
+    config.MaxDrawdownPct = maxDd;
+if (ParseIntArg(args, "--max-concurrent-positions") is { } maxPos)
+    config.MaxConcurrentPositions = maxPos;
+
 // ── Logging ─────────────────────────────────────────────────────
 
 Directory.CreateDirectory(config.DataDir);
@@ -76,9 +102,9 @@ var estimator = new Estimator(config, httpClient, loggerFactory.CreateLogger<Est
 ITrader trader;
 if (config.LiveTrading)
 {
-    if (string.IsNullOrEmpty(config.PolymarketPrivateKey))
+    if (string.IsNullOrEmpty(config.PolymarketPrivateKey) && string.IsNullOrEmpty(config.PolymarketApiKey))
     {
-        log.LogError("POLYMARKET_PRIVATE_KEY not set for live trading");
+        log.LogError("POLYMARKET_PRIVATE_KEY or POLYMARKET_API_KEY required for live trading");
         return 1;
     }
     trader = new LiveTrader(config, httpClient, loggerFactory.CreateLogger<LiveTrader>());

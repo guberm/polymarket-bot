@@ -24,12 +24,12 @@ public sealed class BotConfig
     public double MinTradeUsd { get; init; } = 1.0;
 
     // Risk
-    public double MaxPositionPct { get; init; } = 0.06;
-    public double MaxTotalExposurePct { get; init; } = 0.50;
-    public double MaxCategoryExposurePct { get; init; } = 0.20;
-    public double DailyStopLossPct { get; init; } = 0.03;
-    public double MaxDrawdownPct { get; init; } = 0.15;
-    public int MaxConcurrentPositions { get; init; } = 20;
+    public double MaxPositionPct { get; set; } = 0.15;
+    public double MaxTotalExposurePct { get; set; } = 0.90;
+    public double MaxCategoryExposurePct { get; set; } = 0.50;
+    public double DailyStopLossPct { get; set; } = 0.20;
+    public double MaxDrawdownPct { get; set; } = 0.50;
+    public int MaxConcurrentPositions { get; set; } = 20;
 
     // Capital
     public double InitialBankroll { get; init; } = 10000.0;
@@ -40,6 +40,11 @@ public sealed class BotConfig
     public string PolymarketFunderAddress { get; init; } = "";
     public int PolymarketChainId { get; init; } = 137;
     public int PolymarketSignatureType { get; init; } = 0;
+
+    // CLOB API credentials (pre-generated)
+    public string PolymarketApiKey { get; init; } = "";
+    public string PolymarketApiSecret { get; init; } = "";
+    public string PolymarketApiPassphrase { get; init; } = "";
 
     // Persistence
     public string DataDir { get; init; } = "data";
@@ -60,11 +65,11 @@ public sealed class BotConfig
             KellyFraction = double.Parse(Env("KELLY_FRACTION", "0.25")),
             MinEdge = double.Parse(Env("MIN_EDGE", "0.08")),
             MinTradeUsd = double.Parse(Env("MIN_TRADE_USD", "1.0")),
-            MaxPositionPct = double.Parse(Env("MAX_POSITION_PCT", "0.06")),
-            MaxTotalExposurePct = double.Parse(Env("MAX_TOTAL_EXPOSURE_PCT", "0.50")),
-            MaxCategoryExposurePct = double.Parse(Env("MAX_CATEGORY_EXPOSURE_PCT", "0.20")),
-            DailyStopLossPct = double.Parse(Env("DAILY_STOP_LOSS_PCT", "0.03")),
-            MaxDrawdownPct = double.Parse(Env("MAX_DRAWDOWN_PCT", "0.15")),
+            MaxPositionPct = double.Parse(Env("MAX_POSITION_PCT", "0.15")),
+            MaxTotalExposurePct = double.Parse(Env("MAX_TOTAL_EXPOSURE_PCT", "0.90")),
+            MaxCategoryExposurePct = double.Parse(Env("MAX_CATEGORY_EXPOSURE_PCT", "0.50")),
+            DailyStopLossPct = double.Parse(Env("DAILY_STOP_LOSS_PCT", "0.20")),
+            MaxDrawdownPct = double.Parse(Env("MAX_DRAWDOWN_PCT", "0.50")),
             MaxConcurrentPositions = int.Parse(Env("MAX_CONCURRENT_POSITIONS", "20")),
             InitialBankroll = double.Parse(Env("INITIAL_BANKROLL", "10000")),
             AnthropicApiKey = Env("ANTHROPIC_API_KEY", ""),
@@ -72,6 +77,9 @@ public sealed class BotConfig
             PolymarketFunderAddress = Env("POLYMARKET_FUNDER_ADDRESS", ""),
             PolymarketChainId = int.Parse(Env("POLYMARKET_CHAIN_ID", "137")),
             PolymarketSignatureType = int.Parse(Env("POLYMARKET_SIGNATURE_TYPE", "0")),
+            PolymarketApiKey = Env("POLYMARKET_API_KEY", ""),
+            PolymarketApiSecret = Env("POLYMARKET_API_SECRET", ""),
+            PolymarketApiPassphrase = Env("POLYMARKET_API_PASSPHRASE", ""),
             DataDir = Env("DATA_DIR", "data"),
         };
     }

@@ -47,9 +47,14 @@ public sealed class LiveTrader : ITrader
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json")
             };
-            // Authentication headers would be set up via the private key signing flow.
-            // Full CLOB auth requires EIP-712 signing which needs a dedicated crypto library.
-            // For a production implementation, integrate Nethereum for wallet signing.
+            // CLOB API authentication
+            if (!string.IsNullOrEmpty(_config.PolymarketApiKey))
+            {
+                request.Headers.Add("POLY_ADDRESS", _config.PolymarketFunderAddress);
+                request.Headers.Add("POLY_API_KEY", _config.PolymarketApiKey);
+                request.Headers.Add("POLY_PASSPHRASE", _config.PolymarketApiPassphrase);
+                request.Headers.Add("POLY_SECRET", _config.PolymarketApiSecret);
+            }
 
             var resp = await _http.SendAsync(request, ct);
             resp.EnsureSuccessStatusCode();

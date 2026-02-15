@@ -159,8 +159,9 @@ public sealed class Portfolio
             return false;
         }
 
-        // Daily stop loss
-        var dailyPnl = Bankroll - DailyStartValue;
+        // Daily stop loss (include open position value — deployed capital isn't lost)
+        var portfolioValue = Bankroll + TotalExposure();
+        var dailyPnl = portfolioValue - DailyStartValue;
         if (dailyPnl < 0 && Math.Abs(dailyPnl) > DailyStartValue * _config.DailyStopLossPct)
         {
             _log.LogWarning("Daily stop loss triggered");
@@ -168,10 +169,10 @@ public sealed class Portfolio
             return false;
         }
 
-        // Max drawdown
+        // Max drawdown from high water mark
         if (HighWaterMark > 0)
         {
-            var drawdown = (HighWaterMark - Bankroll) / HighWaterMark;
+            var drawdown = (HighWaterMark - portfolioValue) / HighWaterMark;
             if (drawdown > _config.MaxDrawdownPct)
             {
                 _log.LogWarning("Max drawdown {Drawdown:P1} exceeded", drawdown);

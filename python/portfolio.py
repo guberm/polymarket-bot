@@ -129,8 +129,9 @@ class Portfolio:
             log.debug(f"Category '{signal.market.category}' exposure limit exceeded")
             return False
 
-        # Daily stop loss
-        daily_pnl = self.bankroll - self.daily_start_value
+        # Daily stop loss (include open position value — deployed capital isn't lost)
+        portfolio_value = self.bankroll + self.total_exposure()
+        daily_pnl = portfolio_value - self.daily_start_value
         if daily_pnl < 0 and abs(daily_pnl) > self.daily_start_value * self.config.daily_stop_loss_pct:
             log.warning("Daily stop loss triggered")
             self.is_halted = True
@@ -138,7 +139,7 @@ class Portfolio:
 
         # Max drawdown from high water mark
         if self.high_water_mark > 0:
-            drawdown = (self.high_water_mark - self.bankroll) / self.high_water_mark
+            drawdown = (self.high_water_mark - portfolio_value) / self.high_water_mark
             if drawdown > self.config.max_drawdown_pct:
                 log.warning(f"Max drawdown {drawdown:.1%} exceeded")
                 self.is_halted = True
