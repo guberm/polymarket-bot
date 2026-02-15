@@ -46,6 +46,10 @@ void Con(string msg) { if (console_) Console.WriteLine($"[{Ts()}] {msg}"); }
 
 Directory.CreateDirectory(config.DataDir);
 
+// JSON file logger (matches Python's JsonFormatter → data/bot.log)
+using var fileLogStream = new StreamWriter(
+    Path.Combine(config.DataDir, "bot.log"), append: true) { AutoFlush = true };
+
 using var loggerFactory = LoggerFactory.Create(builder =>
 {
     builder.SetMinimumLevel(verbose ? LogLevel.Debug : LogLevel.Information);
@@ -54,17 +58,10 @@ using var loggerFactory = LoggerFactory.Create(builder =>
         opts.TimestampFormat = "[HH:mm:ss] ";
         opts.SingleLine = true;
     });
-
-    // JSON file logging
-    var logPath = Path.Combine(config.DataDir, "bot.log");
-    builder.AddJsonConsole(); // structured logs go to console; file appender below
+    builder.AddProvider(new JsonFileLoggerProvider(fileLogStream));
 });
 
 var log = loggerFactory.CreateLogger("bot.main");
-
-// Also write structured JSON to file
-var fileLogStream = new StreamWriter(
-    Path.Combine(config.DataDir, "bot.log"), append: true) { AutoFlush = true };
 
 var mode = config.LiveTrading ? "LIVE" : "PAPER";
 log.LogInformation(new string('=', 60));
@@ -117,6 +114,10 @@ httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
 var scanner = new MarketScanner(config, httpClient, loggerFactory.CreateLogger<MarketScanner>());
 var estimator = new Estimator(config, httpClient, loggerFactory.CreateLogger<Estimator>());
 
+// ── Graceful shutdown ───────────────────────────────────────────
+
+using var cts = new CancellationTokenSource();
+
 ITrader trader;
 if (config.LiveTrading)
 {
@@ -125,16 +126,16 @@ if (config.LiveTrading)
         log.LogError("POLYMARKET_PRIVATE_KEY or POLYMARKET_API_KEY required for live trading");
         return 1;
     }
-    trader = new LiveTrader(config, httpClient, loggerFactory.CreateLogger<LiveTrader>());
+    var clobClient = new ClobApiClient(config, httpClient, loggerFactory.CreateLogger<ClobApiClient>());
+    await clobClient.InitializeAsync(cts.Token);
+    Con("CLOB API credentials initialized");
+    var liveTrader = new LiveTrader(clobClient, loggerFactory.CreateLogger<LiveTrader>());
+    trader = liveTrader;
 }
 else
 {
     trader = new PaperTrader();
 }
-
-// ── Graceful shutdown ───────────────────────────────────────────
-
-using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
@@ -348,7 +349,6 @@ if (console_)
     Console.WriteLine(new string('=', 60));
 }
 
-fileLogStream.Dispose();
 return 0;
 
 static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "...";

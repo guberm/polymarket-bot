@@ -65,7 +65,7 @@ class LiveTrader:
             )
 
         self.client = ClobClient(
-            "https://clob.polymarket.com",
+            config.clob_host,
             key=config.polymarket_private_key or None,
             chain_id=config.polymarket_chain_id,
             signature_type=config.polymarket_signature_type,

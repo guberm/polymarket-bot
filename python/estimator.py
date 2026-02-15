@@ -40,7 +40,10 @@ def _build_user_prompt(market: MarketInfo) -> str:
 
 class Estimator:
     def __init__(self, config: BotConfig):
-        self.client = anthropic.Anthropic(api_key=config.anthropic_api_key)
+        kwargs = {"api_key": config.anthropic_api_key}
+        if config.anthropic_api_host:
+            kwargs["base_url"] = config.anthropic_api_host
+        self.client = anthropic.Anthropic(**kwargs)
         self.config = config
 
     def estimate(self, market: MarketInfo) -> Optional[Estimate]:

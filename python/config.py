@@ -50,6 +50,13 @@ class BotConfig:
     polymarket_api_secret: str = ""
     polymarket_api_passphrase: str = ""
 
+    # Endpoints / contracts (required — set via env vars)
+    anthropic_api_host: str = ""
+    gamma_api_host: str = ""
+    clob_host: str = ""
+    exchange_address: str = ""
+    neg_risk_exchange_address: str = ""
+
     # Persistence
     data_dir: str = "data"
 
@@ -67,7 +74,7 @@ class BotConfig:
             ensemble_size=int(os.getenv("ENSEMBLE_SIZE", "5")),
             ensemble_temperature=float(os.getenv("ENSEMBLE_TEMPERATURE", "0.7")),
             kelly_fraction=float(os.getenv("KELLY_FRACTION", "0.25")),
-            min_edge=float(os.getenv("MIN_EDGE", "0.05")),
+            min_edge=float(os.getenv("MIN_EDGE", "0.08")),
             max_position_pct=float(os.getenv("MAX_POSITION_PCT", "0.15")),
             max_total_exposure_pct=float(os.getenv("MAX_TOTAL_EXPOSURE_PCT", "0.90")),
             max_category_exposure_pct=float(os.getenv("MAX_CATEGORY_EXPOSURE_PCT", "0.50")),
@@ -83,5 +90,11 @@ class BotConfig:
             polymarket_api_key=os.getenv("POLYMARKET_API_KEY", ""),
             polymarket_api_secret=os.getenv("POLYMARKET_API_SECRET", ""),
             polymarket_api_passphrase=os.getenv("POLYMARKET_API_PASSPHRASE", ""),
+            min_trade_usd=float(os.getenv("MIN_TRADE_USD", "1.0")),
+            anthropic_api_host=os.getenv("ANTHROPIC_API_HOST", ""),
+            gamma_api_host=os.getenv("GAMMA_API_HOST", ""),
+            clob_host=os.getenv("CLOB_HOST", ""),
+            exchange_address=os.getenv("EXCHANGE_ADDRESS", ""),
+            neg_risk_exchange_address=os.getenv("NEG_RISK_EXCHANGE_ADDRESS", ""),
             data_dir=os.getenv("DATA_DIR", "data"),
         )

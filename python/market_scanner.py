@@ -35,7 +35,7 @@ class MarketScanner:
         self.config = config
         self.session = requests.Session()
         self.session.headers.update({"Accept": "application/json"})
-        self.base_url = "https://gamma-api.polymarket.com"
+        self.base_url = config.gamma_api_host
 
     def scan(self) -> list[MarketInfo]:
         """Fetch all active markets, filter, and return eligible MarketInfo list."""
@@ -216,7 +216,7 @@ class MarketScanner:
     def get_market_price(self, token_id: str) -> Optional[float]:
         """Fetch current price for a single token from the CLOB API."""
         try:
-            url = f"https://clob.polymarket.com/midpoint"
+            url = f"{self.config.clob_host}/midpoint"
             params = {"token_id": token_id}
             resp = self.session.get(url, params=params, timeout=10)
             resp.raise_for_status()

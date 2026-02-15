@@ -46,6 +46,13 @@ public sealed class BotConfig
     public string PolymarketApiSecret { get; init; } = "";
     public string PolymarketApiPassphrase { get; init; } = "";
 
+    // Endpoints / contracts (required — set via env vars)
+    public string AnthropicApiHost { get; init; } = "";
+    public string GammaApiHost { get; init; } = "";
+    public string ClobHost { get; init; } = "";
+    public string ExchangeAddress { get; init; } = "";
+    public string NegRiskExchangeAddress { get; init; } = "";
+
     // Persistence
     public string DataDir { get; init; } = "data";
 
@@ -80,6 +87,11 @@ public sealed class BotConfig
             PolymarketApiKey = Env("POLYMARKET_API_KEY", ""),
             PolymarketApiSecret = Env("POLYMARKET_API_SECRET", ""),
             PolymarketApiPassphrase = Env("POLYMARKET_API_PASSPHRASE", ""),
+            AnthropicApiHost = Env("ANTHROPIC_API_HOST", ""),
+            GammaApiHost = Env("GAMMA_API_HOST", ""),
+            ClobHost = Env("CLOB_HOST", ""),
+            ExchangeAddress = Env("EXCHANGE_ADDRESS", ""),
+            NegRiskExchangeAddress = Env("NEG_RISK_EXCHANGE_ADDRESS", ""),
             DataDir = Env("DATA_DIR", "data"),
         };
     }

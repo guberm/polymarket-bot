@@ -49,7 +49,7 @@ ANTHROPIC_API_KEY=sk-... POLYMARKET_PRIVATE_KEY=0x... POLYMARKET_FUNDER_ADDRESS=
 dotnet run -- --max-position-pct 0.15 --max-total-exposure-pct 0.90 --daily-stop-loss-pct 0.20
 ```
 
-.NET 8 required. No external NuGet packages beyond `Microsoft.Extensions.Logging`.
+.NET 8 required. NuGet packages: `Microsoft.Extensions.Logging`, `Nethereum.Signer` (EIP-712/ECDSA for live trading).
 
 **All config via env vars** — see `BotConfig.from_env()` in `python/config.py` or `BotConfig.FromEnv()` in `dotnet/PolymarketBot/BotConfig.cs`. Key ones:
 - `ANTHROPIC_API_KEY` (required)
@@ -57,8 +57,10 @@ dotnet run -- --max-position-pct 0.15 --max-total-exposure-pct 0.90 --daily-stop
 - `POLYMARKET_SIGNATURE_TYPE` (0=EOA, 1=GNOSIS_SAFE; default: 0)
 - `LIVE_TRADING=true` (default: false/paper)
 - `INITIAL_BANKROLL` (default: 10000)
-- `MIN_EDGE` (default: 0.05 = 5%)
+- `MIN_EDGE` (default: 0.08 = 8%)
 - `SCAN_INTERVAL_MINUTES` (default: 10)
+- `ANTHROPIC_API_HOST`, `GAMMA_API_HOST`, `CLOB_HOST` (API base URLs, required)
+- `EXCHANGE_ADDRESS`, `NEG_RISK_EXCHANGE_ADDRESS` (contract addresses, required for live trading)
 
 No test suite or linter configured.
 
@@ -91,10 +93,12 @@ dotnet/PolymarketBot/
     MarketScanner.cs       – Gamma API with HttpClient, pagination, filtering
     Estimator.cs           – Claude ensemble via Anthropic REST API (HttpClient)
     Portfolio.cs           – Kelly sizing, 5-layer risk, API cost tracking
+    ClobApiClient.cs       – CLOB API auth (EIP-712 signing, HMAC, API key derivation)
     ITrader.cs             – Trader interface
     PaperTrader.cs         – Simulated execution
-    LiveTrader.cs          – CLOB API execution
+    LiveTrader.cs          – Live CLOB API execution (delegates to ClobApiClient)
     PersistenceService.cs  – Atomic JSON save + JSONL trade log (System.Text.Json)
+    JsonFileLoggerProvider.cs – JSON lines file logger (matches Python's JsonFormatter)
 ```
 
 **Data flow per cycle (both implementations):**
@@ -125,3 +129,5 @@ dotnet/PolymarketBot/
 - **Polygon chain** (chain ID 137) for Polymarket settlement
 - **Live trading** uses FOK (Fill or Kill) market orders
 - **.NET version** uses direct HttpClient calls to Anthropic REST API (no SDK dependency)
+- **.NET CLOB auth** implements EIP-712 signing (ClobAuth struct for L1, Order struct for orders) + HMAC-SHA256 for L2, using Nethereum.Signer for Keccak/ECDSA
+- **No hardcoded URLs or contract addresses** — all endpoints/contracts come from env vars

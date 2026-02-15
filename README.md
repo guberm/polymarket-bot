@@ -13,7 +13,7 @@ Every 10 minutes:
   1. Scan all active Polymarket markets (Gamma API)
   2. Filter by liquidity, volume, and time to resolution
   3. Estimate fair probability for each market (N independent Claude calls → trimmed mean)
-  4. Find mispricing > 5% between estimate and market price
+  4. Find mispricing > 8% between estimate and market price
   5. Size position using fractional Kelly criterion (max 15% of bankroll)
   6. Check risk limits (per-position, per-category, total exposure, drawdown)
   7. Execute trade (paper or live)
@@ -59,8 +59,13 @@ ANTHROPIC_API_KEY=sk-... dotnet run -- --verbose
 ```bash
 cd python
 ANTHROPIC_API_KEY=sk-... \
+ANTHROPIC_API_HOST=https://api.anthropic.com \
 POLYMARKET_PRIVATE_KEY=0x... \
 POLYMARKET_FUNDER_ADDRESS=0x... \
+GAMMA_API_HOST=https://gamma-api.polymarket.com \
+CLOB_HOST=https://clob.polymarket.com \
+EXCHANGE_ADDRESS=0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E \
+NEG_RISK_EXCHANGE_ADDRESS=0xC5d563A36AE78145C45a50134d48A1215220f80a \
 LIVE_TRADING=true \
 python main.py
 ```
@@ -69,8 +74,13 @@ python main.py
 ```bash
 cd dotnet/PolymarketBot
 ANTHROPIC_API_KEY=sk-... \
+ANTHROPIC_API_HOST=https://api.anthropic.com \
 POLYMARKET_PRIVATE_KEY=0x... \
 POLYMARKET_FUNDER_ADDRESS=0x... \
+GAMMA_API_HOST=https://gamma-api.polymarket.com \
+CLOB_HOST=https://clob.polymarket.com \
+EXCHANGE_ADDRESS=0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E \
+NEG_RISK_EXCHANGE_ADDRESS=0xC5d563A36AE78145C45a50134d48A1215220f80a \
 LIVE_TRADING=true \
 dotnet run
 ```
@@ -100,7 +110,7 @@ All parameters are set via environment variables. Both implementations use the s
 | `ANTHROPIC_API_KEY` | — | Required. Claude API key |
 | `LIVE_TRADING` | `false` | Set `true` for real orders |
 | `INITIAL_BANKROLL` | `10000` | Starting capital in USD |
-| `MIN_EDGE` | `0.05` | Minimum mispricing to trade (5%) |
+| `MIN_EDGE` | `0.08` | Minimum mispricing to trade (8%) |
 | `SCAN_INTERVAL_MINUTES` | `10` | Time between scan cycles |
 | `MARKETS_PER_CYCLE` | `30` | Max markets to evaluate per cycle |
 | `ENSEMBLE_SIZE` | `5` | Claude calls per market estimate |
@@ -113,9 +123,15 @@ All parameters are set via environment variables. Both implementations use the s
 | `DAILY_STOP_LOSS_PCT` | `0.20` | Halt if daily loss exceeds 20% |
 | `MAX_DRAWDOWN_PCT` | `0.50` | Halt if drawdown exceeds 50% |
 | `MAX_CONCURRENT_POSITIONS` | `20` | Max open positions |
+| `MIN_TRADE_USD` | `1.0` | Minimum trade size in USD |
 | `POLYMARKET_PRIVATE_KEY` | — | Wallet private key (live trading) |
 | `POLYMARKET_FUNDER_ADDRESS` | — | Funder address (live trading) |
 | `POLYMARKET_SIGNATURE_TYPE` | `0` | Signature type (0=EOA, 1=GNOSIS_SAFE) |
+| `ANTHROPIC_API_HOST` | — | Anthropic API base URL |
+| `GAMMA_API_HOST` | — | Gamma API base URL (market discovery) |
+| `CLOB_HOST` | — | CLOB API base URL (price quotes, orders) |
+| `EXCHANGE_ADDRESS` | — | CTF Exchange contract address |
+| `NEG_RISK_EXCHANGE_ADDRESS` | — | Neg Risk CTF Exchange contract address |
 
 ## Project Structure
 
@@ -136,7 +152,15 @@ dotnet/PolymarketBot/          ← .NET 8 implementation
   Program.cs                     Orchestration loop (async)
   BotConfig.cs                   Config from env vars
   Models/                        Domain models
-  Services/                      MarketScanner, Estimator, Portfolio, Traders, Persistence
+  Services/
+    MarketScanner.cs             Gamma API integration, market filtering
+    Estimator.cs                 Claude ensemble via Anthropic REST API
+    Portfolio.cs                 Kelly sizing, risk management, API cost tracking
+    ClobApiClient.cs             CLOB API auth (EIP-712 + HMAC), order signing/posting
+    LiveTrader.cs                Live execution via CLOB API
+    PaperTrader.cs               Simulated execution
+    PersistenceService.cs        Atomic JSON save + JSONL trade log
+    JsonFileLoggerProvider.cs    JSON lines file logger
   PolymarketBot.csproj           Project file
 
 data/                          ← Runtime state (both implementations)

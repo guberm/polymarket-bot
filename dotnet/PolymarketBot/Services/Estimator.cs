@@ -7,19 +7,18 @@ namespace PolymarketBot.Services;
 
 public sealed class Estimator
 {
-    private const string SystemPrompt = """
-        You are a calibrated probability estimator for prediction markets.
-        Given a market question, estimate the TRUE probability that the outcome resolves YES.
-
-        Rules:
-        - Output ONLY valid JSON: {"probability": 0.XX, "reasoning": "one sentence"}
-        - probability must be between 0.02 and 0.98
-        - Be well-calibrated: events you rate at 70% should happen ~70% of the time
-        - Use base rates, current knowledge, and logical reasoning
-        - Do NOT anchor on the current market price — estimate independently
-        - If deeply uncertain, use base rates or lean toward 0.50
-        - Keep reasoning under 50 words
-        """;
+    private const string SystemPrompt =
+        "You are a calibrated probability estimator for prediction markets.\n" +
+        "Given a market question, estimate the TRUE probability that the outcome resolves YES.\n" +
+        "\n" +
+        "Rules:\n" +
+        "- Output ONLY valid JSON: {\"probability\": 0.XX, \"reasoning\": \"one sentence\"}\n" +
+        "- probability must be between 0.02 and 0.98\n" +
+        "- Be well-calibrated: events you rate at 70% should happen ~70% of the time\n" +
+        "- Use base rates, current knowledge, and logical reasoning\n" +
+        "- Do NOT anchor on the current market price — estimate independently\n" +
+        "- If deeply uncertain, use base rates or lean toward 0.50\n" +
+        "- Keep reasoning under 50 words";
 
     private readonly BotConfig _config;
     private readonly HttpClient _http;
@@ -108,7 +107,7 @@ public sealed class Estimator
             };
 
             var json = JsonSerializer.Serialize(requestBody);
-            var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages")
+            var request = new HttpRequestMessage(HttpMethod.Post, $"{_config.AnthropicApiHost}/v1/messages")
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json")
             };
@@ -181,15 +180,13 @@ public sealed class Estimator
             : market.Description;
         if (string.IsNullOrEmpty(desc)) desc = "N/A";
 
-        return $"""
-            Market: {market.Question}
-            Event: {market.EventTitle}
-            Description: {desc}
-            Category: {market.Category}
-            Resolution date: {(string.IsNullOrEmpty(market.EndDate) ? "Unknown" : market.EndDate)}
-
-            Estimate the probability this resolves YES. Output JSON only.
-            """;
+        return $"Market: {market.Question}\n" +
+            $"Event: {market.EventTitle}\n" +
+            $"Description: {desc}\n" +
+            $"Category: {market.Category}\n" +
+            $"Resolution date: {(string.IsNullOrEmpty(market.EndDate) ? "Unknown" : market.EndDate)}\n" +
+            "\n" +
+            "Estimate the probability this resolves YES. Output JSON only.";
     }
 
     private static double StdDev(List<double> values)

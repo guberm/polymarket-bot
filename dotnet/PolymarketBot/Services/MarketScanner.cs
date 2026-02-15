@@ -25,13 +25,16 @@ public sealed class MarketScanner
     private readonly BotConfig _config;
     private readonly HttpClient _http;
     private readonly ILogger<MarketScanner> _log;
-    private const string BaseUrl = "https://gamma-api.polymarket.com";
+    private readonly string _baseUrl;
+    private readonly string _clobHost;
 
     public MarketScanner(BotConfig config, HttpClient http, ILogger<MarketScanner> log)
     {
         _config = config;
         _http = http;
         _log = log;
+        _baseUrl = config.GammaApiHost;
+        _clobHost = config.ClobHost;
     }
 
     public async Task<List<MarketInfo>> ScanAsync(CancellationToken ct = default)
@@ -83,7 +86,7 @@ public sealed class MarketScanner
 
     private async Task<List<JsonElement>> FetchEventsPageAsync(int offset, int limit, CancellationToken ct)
     {
-        var url = $"{BaseUrl}/events?active=true&closed=false&limit={limit}&offset={offset}";
+        var url = $"{_baseUrl}/events?active=true&closed=false&limit={limit}&offset={offset}";
 
         for (var attempt = 0; attempt < 3; attempt++)
         {
@@ -231,13 +234,18 @@ public sealed class MarketScanner
     {
         try
         {
-            var url = $"https://clob.polymarket.com/midpoint?token_id={tokenId}";
+            var url = $"{_clobHost}/midpoint?token_id={tokenId}";
             var resp = await _http.GetAsync(url, ct);
             resp.EnsureSuccessStatusCode();
             var json = await resp.Content.ReadAsStringAsync(ct);
             var doc = JsonDocument.Parse(json);
             if (doc.RootElement.TryGetProperty("mid", out var mid))
-                return double.Parse(mid.GetString() ?? "0");
+            {
+                if (mid.ValueKind == JsonValueKind.Number)
+                    return mid.GetDouble();
+                if (mid.ValueKind == JsonValueKind.String && double.TryParse(mid.GetString(), out var val))
+                    return val;
+            }
             return null;
         }
         catch
