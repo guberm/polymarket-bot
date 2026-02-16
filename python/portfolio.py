@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 
 from config import BotConfig
-from models import MarketInfo, Estimate, Signal, Side, Position, PortfolioSnapshot, ExitSignal
+from models import MarketInfo, Estimate, Signal, Side, Position, PortfolioSnapshot, ExitSignal, TopupCandidate
 
 log = logging.getLogger("bot.portfolio")
 
@@ -204,10 +204,12 @@ class Portfolio:
         """Tier 1: free rule-based exit checks on all positions."""
         signals = []
         for pos in self.positions:
-            # Skip penny positions — price too low to create valid CLOB sell orders
-            # (tick size rounding makes takerAmount=0, and they're not worth selling)
+            # Skip unsellable positions: penny prices or below CLOB minimum (5 tokens)
             if pos.current_price < 0.01:
-                log.debug(f"Skip review for {pos.question[:40]}... (price {pos.current_price:.4f} < $0.01)")
+                log.debug(f"Skip review: {pos.question[:40]}... (price {pos.current_price:.4f} < $0.01)")
+                continue
+            if pos.shares < 5.0:
+                log.debug(f"Skip review: {pos.question[:40]}... ({pos.shares:.2f} tokens < 5 minimum)")
                 continue
 
             pnl = pos.shares * (pos.current_price - pos.entry_price)
@@ -232,6 +234,60 @@ class Portfolio:
                     continue
 
         return signals
+
+    def generate_topup_candidates(self) -> list[TopupCandidate]:
+        """Tiny positions (<5 tokens) that want to exit — need a top-up BUY to reach CLOB minimum."""
+        candidates = []
+        for pos in self.positions:
+            if pos.current_price < 0.01:
+                continue  # penny = unsellable even with top-up
+            if pos.shares >= 5.0:
+                continue  # can sell normally (handled by generate_exit_signals)
+
+            if pos.entry_price <= 0:
+                continue
+
+            pnl_pct = (pos.current_price - pos.entry_price) / pos.entry_price
+
+            # Check same exit conditions as generate_exit_signals
+            exit_reason = None
+            if pnl_pct < -self.config.position_stop_loss_pct:
+                exit_reason = "stop_loss"
+            elif pos.current_price >= self.config.take_profit_price:
+                exit_reason = "take_profit"
+            elif pos.fair_estimate_at_entry > 0:
+                fair_for_side = pos.fair_estimate_at_entry if pos.side == Side.YES else (1.0 - pos.fair_estimate_at_entry)
+                if pos.current_price > fair_for_side + self.config.exit_edge_buffer:
+                    exit_reason = "edge_gone"
+
+            if exit_reason is None:
+                continue
+
+            topup_cost = 5.0 * pos.current_price
+            recovery_value = pos.shares * pos.current_price
+
+            candidates.append(TopupCandidate(
+                position=pos,
+                exit_reason=exit_reason,
+                tokens_to_buy=5.0,
+                topup_cost=topup_cost,
+                recovery_value=recovery_value,
+            ))
+
+        return candidates
+
+    def add_to_position(self, condition_id: str, additional_shares: float, additional_cost: float) -> None:
+        """Add tokens to an existing position (used for top-up before sell)."""
+        pos = next((p for p in self.positions if p.condition_id == condition_id), None)
+        if pos is None:
+            return
+        pos.shares += additional_shares
+        pos.size_usd += additional_cost
+        self.bankroll -= additional_cost
+        log.info(
+            f"Top-up: +{additional_shares:.2f} tokens (${additional_cost:.2f}) -> "
+            f"{pos.question[:40]}... now {pos.shares:.2f} tokens"
+        )
 
     def get_review_candidates(self) -> list[Position]:
         """Tier 2: positions that moved significantly and should be re-estimated by Claude."""

@@ -197,4 +197,126 @@ public sealed class LiveTrader : ITrader
             ExitReason = exitSignal.ExitReason,
         };
     }
+
+    public async Task<Trade?> ExecuteTopupAndSellAsync(TopupCandidate candidate, Portfolio portfolio, CancellationToken ct = default)
+    {
+        var pos = candidate.Position;
+        var price = pos.CurrentPrice;
+        var buyUsd = candidate.TopupCost;
+
+        // Step 1: BUY 5 tokens to top up position
+        _log.LogInformation("TOPUP BUY: {Question} 5 tokens @ {Price:F4} (${Cost:F2})",
+            pos.Question[..Math.Min(pos.Question.Length, 40)], price, buyUsd);
+
+        ClobApiClient.OrderResult? buyResult;
+        try
+        {
+            buyResult = await _clob.PostMarketBuyOrderAsync(pos.TokenId, buyUsd, price, ct);
+            if (buyResult is null)
+            {
+                _log.LogWarning("TOPUP BUY order returned null");
+                return null;
+            }
+            _log.LogInformation("TOPUP BUY GTC order submitted: {OrderId}", buyResult.OrderId);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError("TOPUP BUY order exception: {Error}", ex.Message);
+            return null;
+        }
+
+        // Poll for BUY fill
+        bool buyMatched = false;
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            await Task.Delay(2000, ct);
+            var status = await _clob.GetOrderStatusAsync(buyResult.OrderId, ct);
+            _log.LogDebug("TOPUP BUY poll {Attempt}: status={Status}", attempt + 1, status);
+            if (status == "MATCHED")
+            {
+                buyMatched = true;
+                _log.LogInformation("TOPUP BUY MATCHED: {OrderId}", buyResult.OrderId);
+                break;
+            }
+            if (status is "CANCELLED" or "DELAYED") break;
+        }
+
+        if (!buyMatched)
+        {
+            _log.LogWarning("TOPUP BUY not filled after 6s, cancelling: {OrderId}", buyResult.OrderId);
+            await _clob.CancelOrderAsync(buyResult.OrderId, ct);
+            return null;
+        }
+
+        // BUY filled — update position in portfolio
+        portfolio.AddToPosition(pos.ConditionId, 5.0, buyUsd);
+
+        // Step 2: SELL all tokens (now >= 5)
+        var totalShares = pos.Shares;  // already updated by AddToPosition
+        _log.LogInformation("TOPUP SELL: {Shares:F2} tokens @ {Price:F4}", totalShares, price);
+
+        ClobApiClient.OrderResult? sellResult;
+        try
+        {
+            sellResult = await _clob.PostMarketSellOrderAsync(pos.TokenId, totalShares, price, ct);
+            if (sellResult is null)
+            {
+                _log.LogWarning("TOPUP SELL order returned null (position now has {Shares:F2} tokens)", totalShares);
+                return null;
+            }
+            _log.LogInformation("TOPUP SELL GTC order submitted: {OrderId}", sellResult.OrderId);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError("TOPUP SELL order exception (position now has {Shares:F2} tokens): {Error}", totalShares, ex.Message);
+            return null;
+        }
+
+        // Poll for SELL fill
+        bool sellMatched = false;
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            await Task.Delay(2000, ct);
+            var status = await _clob.GetOrderStatusAsync(sellResult.OrderId, ct);
+            _log.LogDebug("TOPUP SELL poll {Attempt}: status={Status}", attempt + 1, status);
+            if (status == "MATCHED")
+            {
+                sellMatched = true;
+                _log.LogInformation("TOPUP SELL MATCHED: {OrderId}", sellResult.OrderId);
+                break;
+            }
+            if (status is "CANCELLED" or "DELAYED") break;
+        }
+
+        if (!sellMatched)
+        {
+            _log.LogWarning(
+                "TOPUP SELL not filled after 6s, cancelling: {OrderId} (position now sellable with {Shares:F2} tokens)",
+                sellResult.OrderId, totalShares);
+            await _clob.CancelOrderAsync(sellResult.OrderId, ct);
+            return null;
+        }
+
+        // Both orders filled — close position
+        var pnl = portfolio.ClosePosition(pos.ConditionId, price);
+        _log.LogInformation("TOPUP+SELL complete: {Question} PnL=${Pnl:+0.00;-0.00} ({Reason})",
+            pos.Question[..Math.Min(pos.Question.Length, 40)], pnl, candidate.ExitReason);
+
+        return new Trade
+        {
+            TradeId = Guid.NewGuid().ToString(),
+            ConditionId = pos.ConditionId,
+            Question = pos.Question,
+            Side = pos.Side,
+            Action = TradeAction.SELL,
+            Price = price,
+            SizeUsd = pos.SizeUsd,
+            Shares = totalShares,
+            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0,
+            OrderId = sellResult.OrderId,
+            IsPaper = false,
+            Rationale = $"Topup+Exit: {candidate.ExitReason}",
+            ExitReason = candidate.ExitReason,
+        };
+    }
 }

@@ -6,7 +6,7 @@ from typing import Optional
 from uuid import uuid4
 
 from config import BotConfig
-from models import Signal, Trade, Position, Side, TradeAction, ExitSignal
+from models import Signal, Trade, Position, Side, TradeAction, ExitSignal, TopupCandidate
 from portfolio import Portfolio
 
 log = logging.getLogger("bot.trader")
@@ -71,6 +71,21 @@ class PaperTrader:
             rationale=f"Exit: {exit_signal.exit_reason}",
             exit_reason=exit_signal.exit_reason,
         )
+
+    def execute_topup_and_sell(self, candidate: TopupCandidate, portfolio: Portfolio) -> Optional[Trade]:
+        pos = candidate.position
+        price = pos.current_price
+
+        # Step 1: simulate BUY 5 tokens
+        buy_shares = candidate.tokens_to_buy
+        buy_cost = candidate.topup_cost
+        portfolio.add_to_position(pos.condition_id, buy_shares, buy_cost)
+
+        # Step 2: simulate SELL all tokens
+        exit_signal = ExitSignal(pos, candidate.exit_reason, price,
+                                 pos.shares * (price - pos.entry_price),
+                                 (price - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0.0)
+        return self.execute_sell(exit_signal, portfolio)
 
 
 class LiveTrader:
@@ -290,4 +305,126 @@ class LiveTrader:
             is_paper=False,
             rationale=f"Exit: {exit_signal.exit_reason}",
             exit_reason=exit_signal.exit_reason,
+        )
+
+    def execute_topup_and_sell(self, candidate: TopupCandidate, portfolio: Portfolio) -> Optional[Trade]:
+        """Buy 5 tokens to reach CLOB minimum, then sell all tokens to exit stuck position."""
+        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client.order_builder.constants import BUY, SELL
+
+        pos = candidate.position
+        price = pos.current_price
+
+        # Step 1: BUY 5 tokens to top up position
+        buy_usd = candidate.topup_cost
+        log.info(f"TOPUP BUY: {pos.question[:40]}... 5 tokens @ {price:.4f} (${buy_usd:.2f})")
+
+        try:
+            buy_args = OrderArgs(
+                token_id=pos.token_id,
+                amount=buy_usd,
+                price=price,
+                side=BUY,
+            )
+            signed_order = self.client.create_order(buy_args)
+            resp = self.client.post_order(signed_order, OrderType.GTC)
+            buy_order_id = resp.get("orderID") or resp.get("id") or str(uuid4())
+            log.info(f"TOPUP BUY GTC order submitted: {buy_order_id}")
+        except Exception as e:
+            log.error(f"TOPUP BUY order failed: {e}")
+            return None
+
+        # Poll for BUY fill
+        buy_matched = False
+        for attempt in range(3):
+            time.sleep(2)
+            try:
+                order_info = self.client.get_order(buy_order_id)
+                status = order_info.get("status") if isinstance(order_info, dict) else None
+                log.info(f"TOPUP BUY poll {attempt+1}: status={status}")
+                if status == "MATCHED":
+                    buy_matched = True
+                    break
+                if status in ("CANCELLED", "DELAYED"):
+                    break
+            except Exception as e:
+                log.warning(f"TOPUP BUY status check failed: {e}")
+                break
+
+        if not buy_matched:
+            log.warning(f"TOPUP BUY not filled after 6s, cancelling: {buy_order_id}")
+            try:
+                self.client.cancel(buy_order_id)
+            except Exception:
+                pass
+            return None
+
+        # BUY filled — update position in portfolio
+        portfolio.add_to_position(pos.condition_id, 5.0, buy_usd)
+
+        # Step 2: SELL all tokens (now >= 5)
+        total_shares = pos.shares  # already updated by add_to_position
+        log.info(f"TOPUP SELL: {total_shares:.2f} tokens @ {price:.4f}")
+
+        try:
+            sell_args = OrderArgs(
+                token_id=pos.token_id,
+                amount=total_shares,
+                price=price,
+                side=SELL,
+            )
+            signed_order = self.client.create_order(sell_args)
+            resp = self.client.post_order(signed_order, OrderType.GTC)
+            sell_order_id = resp.get("orderID") or resp.get("id") or str(uuid4())
+            log.info(f"TOPUP SELL GTC order submitted: {sell_order_id}")
+        except Exception as e:
+            log.error(f"TOPUP SELL order failed (position now has {total_shares:.2f} tokens): {e}")
+            return None
+
+        # Poll for SELL fill
+        sell_matched = False
+        for attempt in range(3):
+            time.sleep(2)
+            try:
+                order_info = self.client.get_order(sell_order_id)
+                status = order_info.get("status") if isinstance(order_info, dict) else None
+                log.info(f"TOPUP SELL poll {attempt+1}: status={status}")
+                if status == "MATCHED":
+                    sell_matched = True
+                    break
+                if status in ("CANCELLED", "DELAYED"):
+                    break
+            except Exception as e:
+                log.warning(f"TOPUP SELL status check failed: {e}")
+                break
+
+        if not sell_matched:
+            log.warning(
+                f"TOPUP SELL not filled after 6s, cancelling: {sell_order_id} "
+                f"(position now sellable with {total_shares:.2f} tokens)"
+            )
+            try:
+                self.client.cancel(sell_order_id)
+            except Exception:
+                pass
+            return None
+
+        # Both orders filled — close position
+        pnl = portfolio.close_position(pos.condition_id, price)
+        log.info(f"TOPUP+SELL complete: {pos.question[:40]}... PnL=${pnl:+.2f} ({candidate.exit_reason})")
+
+        return Trade(
+            trade_id=str(uuid4()),
+            condition_id=pos.condition_id,
+            question=pos.question,
+            side=pos.side,
+            action=TradeAction.SELL,
+            price=price,
+            size_usd=pos.size_usd,
+            shares=total_shares,
+            timestamp=time.time(),
+            order_id=sell_order_id,
+            is_paper=False,
+            rationale=f"Topup+Exit: {candidate.exit_reason}",
+            exit_reason=candidate.exit_reason,
         )

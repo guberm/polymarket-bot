@@ -24,6 +24,18 @@ from persistence import load_snapshot, save_snapshot, append_trade
 
 log = logging.getLogger("bot.main")
 
+# ANSI color codes for console output
+GREEN = "\033[1;32m"
+RED = "\033[1;31m"
+YELLOW = "\033[1;33m"
+RESET = "\033[0m"
+
+# Enable ANSI colors on Windows
+if sys.platform == "win32":
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+
 
 def ts():
     """Current timestamp for console prints."""
@@ -135,7 +147,7 @@ def main():
         if portfolio.is_halted:
             log.warning("Portfolio halted — stopping")
             if con:
-                print(f"[{ts()}] HALTED: portfolio risk limit reached, stopping bot")
+                print(f"[{ts()}] {RED}HALTED: portfolio risk limit reached, stopping bot{RESET}")
             break
 
         # Daily reset check
@@ -176,13 +188,20 @@ def main():
 
             # Tier 1: free rule-based exit checks
             penny_count = sum(1 for p in portfolio.positions if p.current_price < 0.01)
+            tiny_count = sum(1 for p in portfolio.positions if p.current_price >= 0.01 and p.shares < 5.0)
             exit_signals = portfolio.generate_exit_signals()
             exits_this_cycle = 0
 
+            skip_parts = []
             if penny_count > 0:
-                log.info(f"  Skipping {penny_count} penny positions (price < $0.01, unsellable)")
+                skip_parts.append(f"{penny_count} penny (price<$0.01)")
+            if tiny_count > 0:
+                skip_parts.append(f"{tiny_count} tiny (<5 tokens)")
+            if skip_parts:
+                skip_msg = ", ".join(skip_parts)
+                log.info(f"  Skipping unsellable: {skip_msg}")
                 if con:
-                    print(f"[{ts()}]   SKIP: {penny_count} penny positions (price < $0.01)")
+                    print(f"[{ts()}]   {YELLOW}SKIP unsellable: {skip_msg}{RESET}")
 
             if exit_signals:
                 log.info(f"  Found {len(exit_signals)} exit signals")
@@ -191,7 +210,7 @@ def main():
             else:
                 log.info("  No exit signals — all positions OK")
                 if con:
-                    print(f"[{ts()}]   All positions OK, no exits needed")
+                    print(f"[{ts()}]   {GREEN}All positions OK, no exits needed{RESET}")
 
             for es in exit_signals:
                 if not running or portfolio.is_halted:
@@ -212,10 +231,58 @@ def main():
                     save_snapshot(portfolio.snapshot(), config.data_dir)
                     exits_this_cycle += 1
                     if con:
-                        print(f"[{ts()}]     SOLD OK")
+                        print(f"[{ts()}]     {GREEN}SOLD OK{RESET}")
                 else:
                     if con:
-                        print(f"[{ts()}]     SELL FAILED (min 5 tokens or order not filled)")
+                        print(f"[{ts()}]     {RED}SELL FAILED (min 5 tokens or order not filled){RESET}")
+
+            # Tier 1.5: top-up-and-sell for tiny positions with exit signals
+            topup_candidates = portfolio.generate_topup_candidates()
+            if topup_candidates:
+                log.info(f"  Found {len(topup_candidates)} topup candidate(s) (tiny positions with exit signals)")
+                if con:
+                    print(f"[{ts()}]   Found {len(topup_candidates)} topup candidate(s) (buy 5 tokens -> sell all)")
+
+            for tc in topup_candidates:
+                if not running or portfolio.is_halted:
+                    break
+
+                if tc.topup_cost > portfolio.bankroll:
+                    log.info(
+                        f"  SKIP topup: {tc.position.question[:40]}... "
+                        f"cost=${tc.topup_cost:.2f} > bankroll=${portfolio.bankroll:.2f}"
+                    )
+                    if con:
+                        print(
+                            f"[{ts()}]   {YELLOW}SKIP topup: can't afford ${tc.topup_cost:.2f} "
+                            f"(bankroll=${portfolio.bankroll:.2f}){RESET}"
+                        )
+                    continue
+
+                log.info(
+                    f"  TOPUP+SELL ({tc.exit_reason}): {tc.position.question[:40]}... "
+                    f"{tc.position.shares:.2f} tokens, buy 5 more @ {tc.position.current_price:.4f} "
+                    f"(cost=${tc.topup_cost:.2f}, recover=${tc.recovery_value:.2f})"
+                )
+                if con:
+                    print(
+                        f"[{ts()}]   TOPUP ({tc.exit_reason}): {tc.position.question[:40]}..."
+                    )
+                    print(
+                        f"[{ts()}]     {tc.position.shares:.2f} tokens + buy 5 @ {tc.position.current_price:.4f} "
+                        f"(cost=${tc.topup_cost:.2f})"
+                    )
+
+                trade = trader.execute_topup_and_sell(tc, portfolio)
+                if trade:
+                    append_trade(trade, config.data_dir)
+                    save_snapshot(portfolio.snapshot(), config.data_dir)
+                    exits_this_cycle += 1
+                    if con:
+                        print(f"[{ts()}]     {GREEN}TOPUP+SELL OK (freed ${tc.recovery_value:.2f}){RESET}")
+                else:
+                    if con:
+                        print(f"[{ts()}]     {RED}TOPUP+SELL FAILED{RESET}")
 
             if con:
                 print(
@@ -273,7 +340,7 @@ def main():
                 if estimate is None:
                     log.info(f"  [{i}/{len(eligible)}] SKIP (estimation failed)")
                     if con:
-                        print(f"[{ts()}]   [{i:>2}/{len(eligible)}] -> FAILED")
+                        print(f"[{ts()}]   [{i:>2}/{len(eligible)}] -> {RED}FAILED{RESET}")
                     continue
 
                 # Agent pays for its own inference
@@ -282,7 +349,7 @@ def main():
                 if portfolio.bankroll <= 0:
                     log.warning("Bankroll depleted by API costs — agent is dead")
                     if con:
-                        print(f"[{ts()}] DEAD: bankroll depleted by API costs")
+                        print(f"[{ts()}] {RED}DEAD: bankroll depleted by API costs{RESET}")
                     portfolio.is_halted = True
                     break
 
@@ -309,7 +376,7 @@ def main():
                         f"${signal_obj.position_size_usd:.2f}"
                     )
                     if con:
-                        print(f"[{ts()}]   [{i:>2}/{len(eligible)}] -> {estimate.fair_probability:.0%} RISK BLOCKED")
+                        print(f"[{ts()}]   [{i:>2}/{len(eligible)}] -> {estimate.fair_probability:.0%} {YELLOW}RISK BLOCKED{RESET}")
                     continue
 
                 # Execute
@@ -324,7 +391,7 @@ def main():
                 trade = trader.execute(signal_obj, portfolio)
                 if trade:
                     if con:
-                        print(f"[{ts()}]   [{i:>2}/{len(eligible)}] TRADE OK (EV=${signal_obj.expected_value:.2f})")
+                        print(f"[{ts()}]   [{i:>2}/{len(eligible)}] {GREEN}TRADE OK{RESET} (EV=${signal_obj.expected_value:.2f})")
 
                     # Log on-chain USDC balance after trade (diagnostic only;
                     # internal bookkeeping is authoritative when positions are open)
@@ -347,7 +414,7 @@ def main():
                 else:
                     log.warning(f"  [{i}/{len(eligible)}] TRADE FAILED: order execution error")
                     if con:
-                        print(f"[{ts()}]   [{i:>2}/{len(eligible)}] TRADE FAILED")
+                        print(f"[{ts()}]   [{i:>2}/{len(eligible)}] {RED}TRADE FAILED{RESET}")
 
             # Cycle summary
             log.info(
@@ -370,7 +437,7 @@ def main():
         except Exception as e:
             log.error(f"Cycle {cycle} error: {e}", exc_info=True)
             if con:
-                print(f"\n[{ts()}] ERROR: {e}")
+                print(f"\n[{ts()}] {RED}ERROR: {e}{RESET}")
 
         # Sleep in 1-second ticks for responsive shutdown
         if running:

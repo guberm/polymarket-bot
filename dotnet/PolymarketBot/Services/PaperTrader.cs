@@ -71,4 +71,24 @@ public sealed class PaperTrader : ITrader
 
         return Task.FromResult<Trade?>(trade);
     }
+
+    public Task<Trade?> ExecuteTopupAndSellAsync(TopupCandidate candidate, Portfolio portfolio, CancellationToken ct = default)
+    {
+        var pos = candidate.Position;
+        var price = pos.CurrentPrice;
+
+        // Step 1: simulate BUY 5 tokens
+        portfolio.AddToPosition(pos.ConditionId, candidate.TokensToBuy, candidate.TopupCost);
+
+        // Step 2: simulate SELL all tokens
+        var exitSignal = new ExitSignal
+        {
+            Position = pos,
+            ExitReason = candidate.ExitReason,
+            CurrentPrice = price,
+            UnrealizedPnl = pos.Shares * (price - pos.EntryPrice),
+            PnlPct = pos.EntryPrice > 0 ? (price - pos.EntryPrice) / pos.EntryPrice : 0.0,
+        };
+        return ExecuteSellAsync(exitSignal, portfolio, ct);
+    }
 }

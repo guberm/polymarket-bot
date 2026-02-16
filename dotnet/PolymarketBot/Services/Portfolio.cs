@@ -254,12 +254,17 @@ public sealed class Portfolio
         var signals = new List<ExitSignal>();
         foreach (var pos in Positions)
         {
-            // Skip penny positions — price too low to create valid CLOB sell orders
-            // (tick size rounding makes takerAmount=0, and they're not worth selling)
+            // Skip unsellable positions: penny prices or below CLOB minimum (5 tokens)
             if (pos.CurrentPrice < 0.01)
             {
-                _log.LogDebug("Skip review for {Question} (price {Price:F4} < $0.01)",
+                _log.LogDebug("Skip review: {Question} (price {Price:F4} < $0.01)",
                     Truncate(pos.Question, 40), pos.CurrentPrice);
+                continue;
+            }
+            if (pos.Shares < 5.0)
+            {
+                _log.LogDebug("Skip review: {Question} ({Shares:F2} tokens < 5 minimum)",
+                    Truncate(pos.Question, 40), pos.Shares);
                 continue;
             }
 
@@ -292,6 +297,59 @@ public sealed class Portfolio
             }
         }
         return signals;
+    }
+
+    public List<TopupCandidate> GenerateTopupCandidates()
+    {
+        var candidates = new List<TopupCandidate>();
+        foreach (var pos in Positions)
+        {
+            if (pos.CurrentPrice < 0.01) continue;  // penny = unsellable even with top-up
+            if (pos.Shares >= 5.0) continue;         // can sell normally
+            if (pos.EntryPrice <= 0) continue;
+
+            var pnlPct = (pos.CurrentPrice - pos.EntryPrice) / pos.EntryPrice;
+
+            // Check same exit conditions as GenerateExitSignals
+            string? exitReason = null;
+            if (pnlPct < -_config.PositionStopLossPct)
+                exitReason = "stop_loss";
+            else if (pos.CurrentPrice >= _config.TakeProfitPrice)
+                exitReason = "take_profit";
+            else if (pos.FairEstimateAtEntry > 0)
+            {
+                var fairForSide = pos.Side == Side.YES ? pos.FairEstimateAtEntry : 1.0 - pos.FairEstimateAtEntry;
+                if (pos.CurrentPrice > fairForSide + _config.ExitEdgeBuffer)
+                    exitReason = "edge_gone";
+            }
+
+            if (exitReason is null) continue;
+
+            var topupCost = 5.0 * pos.CurrentPrice;
+            var recoveryValue = pos.Shares * pos.CurrentPrice;
+
+            candidates.Add(new TopupCandidate
+            {
+                Position = pos,
+                ExitReason = exitReason,
+                TokensToBuy = 5.0,
+                TopupCost = topupCost,
+                RecoveryValue = recoveryValue,
+            });
+        }
+        return candidates;
+    }
+
+    public void AddToPosition(string conditionId, double additionalShares, double additionalCost)
+    {
+        var pos = Positions.FirstOrDefault(p => p.ConditionId == conditionId);
+        if (pos is null) return;
+        pos.Shares += additionalShares;
+        pos.SizeUsd += additionalCost;
+        Bankroll -= additionalCost;
+        _log.LogInformation(
+            "Top-up: +{Shares:F2} tokens (${Cost:F2}) -> {Question} now {Total:F2} tokens",
+            additionalShares, additionalCost, Truncate(pos.Question, 40), pos.Shares);
     }
 
     public List<Position> GetReviewCandidates()

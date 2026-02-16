@@ -1,6 +1,27 @@
+using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using PolymarketBot;
 using PolymarketBot.Services;
+
+// ── Enable ANSI colors on Windows ──────────────────────────────
+if (OperatingSystem.IsWindows())
+{
+    EnableAnsiColors();
+}
+
+static void EnableAnsiColors()
+{
+    const int STD_OUTPUT_HANDLE = -11;
+    const uint ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004;
+
+    var handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (GetConsoleMode(handle, out uint mode))
+        SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+}
+
+[DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int nStdHandle);
+[DllImport("kernel32.dll")] static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+[DllImport("kernel32.dll")] static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
 
 // ── Parse args ──────────────────────────────────────────────────
 
@@ -38,6 +59,12 @@ if (ParseIntArg(args, "--max-concurrent-positions") is { } maxPos)
     config.MaxConcurrentPositions = maxPos;
 
 static string Ts() => DateTime.Now.ToString("HH:mm:ss");
+
+// ANSI color codes for console output
+const string GREEN = "\x1b[1;32m";
+const string RED = "\x1b[1;31m";
+const string YELLOW = "\x1b[1;33m";
+const string RESET = "\x1b[0m";
 
 // Helper: Console.Write only if --console flag is set
 void Con(string msg) { if (console_) Console.WriteLine($"[{Ts()}] {msg}"); }
@@ -167,7 +194,7 @@ while (!cts.Token.IsCancellationRequested)
     if (portfolio.IsHalted)
     {
         log.LogWarning("Portfolio halted — stopping");
-        Con("HALTED: portfolio risk limit reached, stopping bot");
+        Con($"{RED}HALTED: portfolio risk limit reached, stopping bot{RESET}");
         break;
     }
 
@@ -210,13 +237,20 @@ while (!cts.Token.IsCancellationRequested)
         portfolio.UpdatePositionPrices(prices);
 
         var pennyCount = portfolio.Positions.Count(p => p.CurrentPrice < 0.01);
+        var tinyCount = portfolio.Positions.Count(p => p.CurrentPrice >= 0.01 && p.Shares < 5.0);
         var exitSignals = portfolio.GenerateExitSignals();
         var exitsThisCycle = 0;
 
-        if (pennyCount > 0)
         {
-            log.LogInformation("  Skipping {Count} penny positions (price < $0.01, unsellable)", pennyCount);
-            Con($"  SKIP: {pennyCount} penny positions (price < $0.01)");
+            var skipParts = new List<string>();
+            if (pennyCount > 0) skipParts.Add($"{pennyCount} penny (price<$0.01)");
+            if (tinyCount > 0) skipParts.Add($"{tinyCount} tiny (<5 tokens)");
+            if (skipParts.Count > 0)
+            {
+                var skipMsg = string.Join(", ", skipParts);
+                log.LogInformation("  Skipping unsellable: {Msg}", skipMsg);
+                Con($"  {YELLOW}SKIP unsellable: {skipMsg}{RESET}");
+            }
         }
 
         if (exitSignals.Count > 0)
@@ -227,7 +261,7 @@ while (!cts.Token.IsCancellationRequested)
         else
         {
             log.LogInformation("  No exit signals — all positions OK");
-            Con("  All positions OK, no exits needed");
+            Con($"  {GREEN}All positions OK, no exits needed{RESET}");
         }
 
         foreach (var es in exitSignals)
@@ -250,11 +284,57 @@ while (!cts.Token.IsCancellationRequested)
                 PersistenceService.AppendTrade(sellTrade, config.DataDir);
                 PersistenceService.SaveSnapshot(portfolio.Snapshot(), config.DataDir);
                 exitsThisCycle++;
-                Con($"    SOLD OK");
+                Con($"    {GREEN}SOLD OK{RESET}");
             }
             else
             {
-                Con($"    SELL FAILED (min 5 tokens or order not filled)");
+                Con($"    {RED}SELL FAILED (min 5 tokens or order not filled){RESET}");
+            }
+        }
+
+        // Tier 1.5: top-up-and-sell for tiny positions with exit signals
+        var topupCandidates = portfolio.GenerateTopupCandidates();
+        if (topupCandidates.Count > 0)
+        {
+            log.LogInformation("  Found {Count} topup candidate(s) (tiny positions with exit signals)", topupCandidates.Count);
+            Con($"  Found {topupCandidates.Count} topup candidate(s) (buy 5 tokens -> sell all)");
+        }
+
+        foreach (var tc in topupCandidates)
+        {
+            if (cts.Token.IsCancellationRequested || portfolio.IsHalted)
+                break;
+
+            if (tc.TopupCost > portfolio.Bankroll)
+            {
+                log.LogInformation(
+                    "  SKIP topup: {Question} cost=${Cost:F2} > bankroll=${Bankroll:F2}",
+                    Truncate(tc.Position.Question, 40), tc.TopupCost, portfolio.Bankroll);
+                Con($"  {YELLOW}SKIP topup: can't afford ${tc.TopupCost:F2} (bankroll=${portfolio.Bankroll:F2}){RESET}");
+                continue;
+            }
+
+            log.LogInformation(
+                "  TOPUP+SELL ({Reason}): {Question} {Shares:F2} tokens, buy 5 more @ {Price:F4} (cost=${Cost:F2}, recover=${Recovery:F2})",
+                tc.ExitReason, Truncate(tc.Position.Question, 40), tc.Position.Shares,
+                tc.Position.CurrentPrice, tc.TopupCost, tc.RecoveryValue);
+            if (console_)
+            {
+                Con($"  TOPUP ({tc.ExitReason}): {Truncate(tc.Position.Question, 40)}...");
+                Con($"    {tc.Position.Shares:F2} tokens + buy 5 @ {tc.Position.CurrentPrice:F4} (cost=${tc.TopupCost:F2})");
+            }
+
+            var topupTrade = await trader.ExecuteTopupAndSellAsync(tc, portfolio, cts.Token);
+            if (topupTrade is not null)
+            {
+                PersistenceService.AppendTrade(topupTrade, config.DataDir);
+                PersistenceService.SaveSnapshot(portfolio.Snapshot(), config.DataDir);
+                exitsThisCycle++;
+                Con($"    {GREEN}TOPUP+SELL OK (freed ${tc.RecoveryValue:F2}){RESET}");
+            }
+            else
+            {
+                Con($"    {RED}TOPUP+SELL FAILED{RESET}");
             }
         }
 
@@ -313,7 +393,7 @@ while (!cts.Token.IsCancellationRequested)
             if (estimate is null)
             {
                 log.LogInformation("  {Idx} SKIP (estimation failed)", idx);
-                Con($"  {idx} -> FAILED");
+                Con($"  {idx} -> {RED}FAILED{RESET}");
                 continue;
             }
 
@@ -323,7 +403,7 @@ while (!cts.Token.IsCancellationRequested)
             if (portfolio.Bankroll <= 0)
             {
                 log.LogWarning("Bankroll depleted by API costs — agent is dead");
-                Con("DEAD: bankroll depleted by API costs");
+                Con($"{RED}DEAD: bankroll depleted by API costs{RESET}");
                 portfolio.IsHalted = true;
                 break;
             }
@@ -348,7 +428,7 @@ while (!cts.Token.IsCancellationRequested)
                 log.LogInformation(
                     "  {Idx} SKIP (risk limit): {Side} {Question} ${Size:F2}",
                     idx, signal.Side, Truncate(market.Question, 40), signal.PositionSizeUsd);
-                Con($"  {idx} -> {estimate.FairProbability:P0} RISK BLOCKED");
+                Con($"  {idx} -> {estimate.FairProbability:P0} {YELLOW}RISK BLOCKED{RESET}");
                 continue;
             }
 
@@ -386,12 +466,12 @@ while (!cts.Token.IsCancellationRequested)
                     idx, trade.Side, Truncate(market.Question, 50), trade.SizeUsd, trade.Price,
                     signal.Edge, signal.ExpectedValue);
 
-                Con($"  {idx} TRADE OK (EV=${signal.ExpectedValue:F2})");
+                Con($"  {idx} {GREEN}TRADE OK{RESET} (EV=${signal.ExpectedValue:F2})");
             }
             else
             {
                 log.LogWarning("  {Idx} TRADE FAILED: order execution error", idx);
-                Con($"  {idx} TRADE FAILED");
+                Con($"  {idx} {RED}TRADE FAILED{RESET}");
             }
         }
 
@@ -419,7 +499,7 @@ while (!cts.Token.IsCancellationRequested)
     catch (Exception ex)
     {
         log.LogError(ex, "Cycle {Cycle} error", cycle);
-        Con($"ERROR: {ex.Message}");
+        Con($"{RED}ERROR: {ex.Message}{RESET}");
     }
 
     // Sleep in 1-second ticks for responsive shutdown

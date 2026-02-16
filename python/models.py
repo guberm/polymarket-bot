@@ -114,6 +114,16 @@ class ExitSignal:
 
 
 @dataclass
+class TopupCandidate:
+    """Tiny position (<5 tokens) that wants to exit but needs a top-up BUY first."""
+    position: Position
+    exit_reason: str
+    tokens_to_buy: float   # 5.0 (CLOB minimum for BUY order)
+    topup_cost: float      # tokens_to_buy * current_price
+    recovery_value: float  # position.shares * current_price (stuck capital to free)
+
+
+@dataclass
 class PortfolioSnapshot:
     """Complete portfolio state for persistence."""
     bankroll: float
