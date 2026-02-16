@@ -16,4 +16,5 @@ public sealed class Trade
     public string Rationale { get; init; } = "";
     public double EdgeAtEntry { get; init; }
     public double KellyAtEntry { get; init; }
+    public string ExitReason { get; init; } = "";
 }

@@ -59,6 +59,8 @@ dotnet run -- --max-position-pct 0.15 --max-total-exposure-pct 0.90 --daily-stop
 - `INITIAL_BANKROLL` (default: 10000)
 - `MIN_EDGE` (default: 0.08 = 8%)
 - `SCAN_INTERVAL_MINUTES` (default: 10)
+- `ENABLE_POSITION_REVIEW` (default: true) — review & exit positions each cycle
+- `POSITION_STOP_LOSS_PCT` (default: 0.30), `TAKE_PROFIT_PRICE` (default: 0.95), `EXIT_EDGE_BUFFER` (default: 0.05)
 - `ANTHROPIC_API_HOST`, `GAMMA_API_HOST`, `CLOB_HOST` (API base URLs, required)
 - `EXCHANGE_ADDRESS`, `NEG_RISK_EXCHANGE_ADDRESS` (contract addresses, required for live trading)
 
@@ -72,11 +74,11 @@ No test suite or linter configured.
 python/
   main.py            – Orchestration loop: scan → estimate → signal → risk check → execute → save
   config.py          – BotConfig dataclass, all params from env vars
-  models.py          – Domain dataclasses: MarketInfo, Estimate, Signal, Position, Trade, PortfolioSnapshot
-  market_scanner.py  – MarketScanner: Gamma API pagination, market parsing/filtering, CLOB price quotes
+  models.py          – Domain dataclasses: MarketInfo, Estimate, Signal, Position, Trade, ExitSignal, PortfolioSnapshot
+  market_scanner.py  – MarketScanner: Gamma API pagination, market parsing/filtering, CLOB price quotes, batch price fetch
   estimator.py       – Estimator: N independent Claude calls per market, trimmed mean, JSON parsing
-  portfolio.py       – Portfolio: bankroll, positions, Kelly sizing, risk limits, API cost tracking
-  trader.py          – PaperTrader (simulated) + LiveTrader (py-clob-client market orders via CLOB)
+  portfolio.py       – Portfolio: bankroll, positions, Kelly sizing, risk limits, position review & exit signals, API cost tracking
+  trader.py          – PaperTrader (simulated) + LiveTrader (py-clob-client GTC orders, buy & sell via CLOB)
   persistence.py     – JSON save/load for PortfolioSnapshot + JSONL append for trade log
   logger_setup.py    – Dual logging: colored console + JSON lines file (data/bot.log)
   requirements.txt   – Python dependencies
@@ -90,24 +92,27 @@ dotnet/PolymarketBot/
   BotConfig.cs             – Config from env vars (same vars as Python)
   Models/                  – Enums, MarketInfo, Estimate, Signal, Position, Trade, PortfolioSnapshot
   Services/
-    MarketScanner.cs       – Gamma API with HttpClient, pagination, filtering
+    MarketScanner.cs       – Gamma API with HttpClient, pagination, filtering, batch price fetch
     Estimator.cs           – Claude ensemble via Anthropic REST API (HttpClient)
-    Portfolio.cs           – Kelly sizing, 5-layer risk, API cost tracking
-    ClobApiClient.cs       – CLOB API auth (EIP-712 signing, HMAC, API key derivation)
-    ITrader.cs             – Trader interface
-    PaperTrader.cs         – Simulated execution
-    LiveTrader.cs          – Live CLOB API execution (delegates to ClobApiClient)
+    Portfolio.cs           – Kelly sizing, 5-layer risk, position review & exit signals, API cost tracking
+    ClobApiClient.cs       – CLOB API auth (EIP-712 signing, HMAC, API key derivation), buy & sell orders
+    ITrader.cs             – Trader interface (ExecuteAsync + ExecuteSellAsync)
+    PaperTrader.cs         – Simulated execution (buy & sell)
+    LiveTrader.cs          – Live CLOB API execution with GTC polling (buy & sell)
     PersistenceService.cs  – Atomic JSON save + JSONL trade log (System.Text.Json)
     JsonFileLoggerProvider.cs – JSON lines file logger (matches Python's JsonFormatter)
 ```
 
 **Data flow per cycle (both implementations):**
-1. `MarketScanner.Scan()` → list of `MarketInfo` (filtered by liquidity, volume, time-to-resolution)
-2. `Estimator.Estimate()` → `Estimate` per market (ensemble of N Claude calls, trimmed mean)
-3. `Portfolio.GenerateSignal()` → `Signal` when edge > `min_edge` (8% default)
-4. `Portfolio.CheckRisk()` → validates all risk limits before execution
-5. `PaperTrader/LiveTrader.Execute()` → `Trade` record + `Position` opened
-6. `Persistence` → save snapshot + append trade to log
+
+1. **Balance sync** — fetch on-chain USDC, sync bankroll (downward allowed with positions open)
+2. **Position review** — fetch midpoint prices, check exit rules (stop-loss/take-profit/edge-gone), execute SELLs
+3. `MarketScanner.Scan()` → list of `MarketInfo` (filtered by liquidity, volume, time-to-resolution)
+4. `Estimator.Estimate()` → `Estimate` per market (ensemble of N Claude calls, trimmed mean)
+5. `Portfolio.GenerateSignal()` → `Signal` when edge > `min_edge` (8% default)
+6. `Portfolio.CheckRisk()` → validates all risk limits before execution
+7. `PaperTrader/LiveTrader.Execute()` → `Trade` record + `Position` opened
+8. `Persistence` → save snapshot + append trade to log
 
 **External APIs:**
 - Gamma API (`gamma-api.polymarket.com/events`) — market discovery with pagination
@@ -127,7 +132,9 @@ dotnet/PolymarketBot/
 - **Agent pays for inference** — API token costs are deducted from bankroll each cycle
 - **Atomic persistence** — portfolio.json written via tmp+rename to avoid corruption on crash
 - **Polygon chain** (chain ID 137) for Polymarket settlement
-- **Live trading** uses FOK (Fill or Kill) market orders
+- **Live trading** uses GTC (Good-Till-Cancelled) limit orders with 6-second fill timeout, poll for MATCHED status, cancel if unfilled
+- **Position review** each cycle: stop-loss (>30% drop), take-profit (price≥0.95), edge-gone (market past fair estimate). Penny positions (<$0.01) skipped — unsellable on CLOB
+- **SELL orders** use Side=1, makerAmount=tokens, takerAmount=USDC (reversed from BUY). Minimum 5 tokens enforced
 - **.NET version** uses direct HttpClient calls to Anthropic REST API (no SDK dependency)
 - **.NET CLOB auth** implements EIP-712 signing (ClobAuth struct for L1, Order struct for orders) + HMAC-SHA256 for L2, using Nethereum.Signer for Keccak/ECDSA
 - **No hardcoded URLs or contract addresses** — all endpoints/contracts come from env vars

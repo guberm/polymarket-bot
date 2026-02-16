@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 
 from config import BotConfig
-from models import MarketInfo, Estimate, Signal, Side, Position, PortfolioSnapshot
+from models import MarketInfo, Estimate, Signal, Side, Position, PortfolioSnapshot, ExitSignal
 
 log = logging.getLogger("bot.portfolio")
 
@@ -88,12 +88,20 @@ class Portfolio:
         kelly_raw = (b * p - q) / b if b > 0 else 0.0
         kelly_raw = max(0.0, kelly_raw)
 
-        # Fractional Kelly + position cap
+        # Fractional Kelly + position cap (use portfolio value, not just cash)
         kelly = kelly_raw * self.config.kelly_fraction
-        size_usd = kelly * self.bankroll
-        size_usd = min(size_usd, self.bankroll * self.config.max_position_pct)
+        portfolio_val = self.bankroll + self.total_exposure()
+        size_usd = kelly * portfolio_val
+        size_usd = min(size_usd, portfolio_val * self.config.max_position_pct)
+        size_usd = min(size_usd, self.bankroll)  # never exceed available cash
 
         if size_usd < self.config.min_trade_usd:
+            return None
+
+        # CLOB minimum order size is 5 tokens → minimum USD = 5 * price
+        min_clob_usd = 5.0 * market_price
+        if size_usd < min_clob_usd:
+            log.debug(f"Position ${size_usd:.2f} below CLOB minimum ${min_clob_usd:.2f} (5 tokens @ {market_price})")
             return None
 
         return Signal(
@@ -119,14 +127,15 @@ class Portfolio:
             log.info(f"Risk BLOCK: max positions ({self.config.max_concurrent_positions}) reached")
             return False
 
+        pv = self.bankroll + self.total_exposure()
         new_exposure = self.total_exposure() + signal.position_size_usd
-        max_allowed = self.bankroll * self.config.max_total_exposure_pct
+        max_allowed = pv * self.config.max_total_exposure_pct
         if new_exposure > max_allowed:
             log.info(f"Risk BLOCK: total exposure ${new_exposure:.2f} > limit ${max_allowed:.2f}")
             return False
 
         cat_exp = self.category_exposure(signal.market.category) + signal.position_size_usd
-        cat_limit = self.bankroll * self.config.max_category_exposure_pct
+        cat_limit = pv * self.config.max_category_exposure_pct
         if cat_exp > cat_limit:
             log.info(f"Risk BLOCK: '{signal.market.category}' exposure ${cat_exp:.2f} > limit ${cat_limit:.2f}")
             return False
@@ -181,6 +190,96 @@ class Portfolio:
 
         log.info(f"Closed {pos.question[:40]}... PnL: ${pnl:+.2f}")
         return pnl
+
+    # ── Position review ─────────────────────────────────────────────
+
+    def update_position_prices(self, prices: dict[str, float]) -> None:
+        """Update current_price and unrealized_pnl for all positions with fresh market data."""
+        for pos in self.positions:
+            if pos.token_id in prices:
+                pos.current_price = prices[pos.token_id]
+                pos.unrealized_pnl = pos.shares * (pos.current_price - pos.entry_price)
+
+    def generate_exit_signals(self) -> list[ExitSignal]:
+        """Tier 1: free rule-based exit checks on all positions."""
+        signals = []
+        for pos in self.positions:
+            # Skip penny positions — price too low to create valid CLOB sell orders
+            # (tick size rounding makes takerAmount=0, and they're not worth selling)
+            if pos.current_price < 0.01:
+                log.debug(f"Skip review for {pos.question[:40]}... (price {pos.current_price:.4f} < $0.01)")
+                continue
+
+            pnl = pos.shares * (pos.current_price - pos.entry_price)
+            pnl_pct = (pos.current_price - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0.0
+
+            # Stop-loss: price dropped too far from entry
+            if pnl_pct < -self.config.position_stop_loss_pct:
+                signals.append(ExitSignal(pos, "stop_loss", pos.current_price, pnl, pnl_pct))
+                continue
+
+            # Take-profit: price near certainty
+            if pos.current_price >= self.config.take_profit_price:
+                signals.append(ExitSignal(pos, "take_profit", pos.current_price, pnl, pnl_pct))
+                continue
+
+            # Edge-gone: market moved past our original fair estimate
+            if pos.fair_estimate_at_entry > 0:
+                # fair_for_side: what we estimated the correct price for our side was
+                fair_for_side = pos.fair_estimate_at_entry if pos.side == Side.YES else (1.0 - pos.fair_estimate_at_entry)
+                if pos.current_price > fair_for_side + self.config.exit_edge_buffer:
+                    signals.append(ExitSignal(pos, "edge_gone", pos.current_price, pnl, pnl_pct))
+                    continue
+
+        return signals
+
+    def get_review_candidates(self) -> list[Position]:
+        """Tier 2: positions that moved significantly and should be re-estimated by Claude."""
+        candidates = []
+        for pos in self.positions:
+            if pos.entry_price <= 0:
+                continue
+            price_move = abs(pos.current_price - pos.entry_price) / pos.entry_price
+            if price_move >= self.config.review_reestimate_threshold_pct:
+                candidates.append(pos)
+        # Review biggest positions first
+        candidates.sort(key=lambda p: p.size_usd, reverse=True)
+        return candidates
+
+    # ── Balance sync ─────────────────────────────────────────────────
+
+    def sync_balance(self, actual_usdc_balance: float) -> None:
+        """Sync bankroll from actual on-chain USDC balance.
+
+        When positions are open, on-chain USDC only shows free cash — capital
+        deployed in conditional tokens isn't included.  Internal tracking is
+        more reliable for upward drift, so we only increase bankroll when no
+        positions are open.  However, if on-chain is LOWER than internal
+        bankroll (e.g. fees, failed order deductions), we always sync down
+        to avoid trying to spend money we don't have.
+        """
+        if self.positions:
+            if actual_usdc_balance < self.bankroll - 0.001:
+                old_bankroll = self.bankroll
+                self.bankroll = actual_usdc_balance
+                log.warning(
+                    f"Balance sync (downward): ${old_bankroll:.2f} -> ${self.bankroll:.2f} "
+                    f"(on-chain lower, {len(self.positions)} positions open)"
+                )
+            else:
+                log.info(
+                    f"On-chain USDC: ${actual_usdc_balance:.2f} "
+                    f"(internal bankroll: ${self.bankroll:.2f}, "
+                    f"{len(self.positions)} positions open — skipping sync)"
+                )
+            return
+
+        old_bankroll = self.bankroll
+        self.bankroll = actual_usdc_balance
+        diff = self.bankroll - old_bankroll
+        if abs(diff) > 0.001:
+            log.info(f"Balance sync: ${old_bankroll:.2f} -> ${self.bankroll:.2f} (diff=${diff:+.2f})")
+        self.high_water_mark = max(self.high_water_mark, self.bankroll + self.total_exposure())
 
     # ── Cost tracking ─────────────────────────────────────────────────
 

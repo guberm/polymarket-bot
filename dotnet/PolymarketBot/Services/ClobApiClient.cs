@@ -150,7 +150,12 @@ public sealed class ClobApiClient
 
     // ── Order posting ───────────────────────────────────────────────
 
-    public async Task<string?> PostMarketBuyOrderAsync(
+    /// <summary>
+    /// Result of a CLOB order submission. Contains actual fill amounts when matched.
+    /// </summary>
+    public record OrderResult(string OrderId, double ActualCostUsd, double ActualShares);
+
+    public async Task<OrderResult?> PostMarketBuyOrderAsync(
         string tokenId, double amountUsd, double price, CancellationToken ct)
     {
         // 1. Fetch market metadata
@@ -161,13 +166,26 @@ public sealed class ClobApiClient
         _log.LogDebug("Order metadata: tickSize={Tick}, negRisk={NegRisk}, decimals={Dec}",
             tickSize, negRisk, decimals);
 
-        // 2. Calculate amounts (6-decimal USDC units)
-        // For BUY: makerAmount = USDC to spend, takerAmount = tokens to receive
-        double rawMaker = Math.Round(amountUsd, decimals);
-        double rawTaker = Math.Round(amountUsd / price, decimals);
+        // 2. Round price to tick size (CLOB validates derived price matches tick)
+        double roundedPrice = Math.Round(price, decimals);
 
-        long makerAmount = (long)Math.Floor(rawMaker * 1_000_000);
-        long takerAmount = (long)Math.Floor(rawTaker * 1_000_000);
+        // 3. Calculate amounts (6-decimal USDC units)
+        // For GTC BUY: takerAmount = tokens to receive (max 2 dp), makerAmount = USDC to spend (max 4 dp)
+        // CLOB derives price = maker/taker and validates it matches tick size
+        double rawTaker = Math.Round(amountUsd / roundedPrice, 2);
+        double rawMaker = Math.Round(rawTaker * roundedPrice, 4);
+
+        // CLOB enforces minimum order size of 5 tokens
+        if (rawTaker < 5.0)
+        {
+            _log.LogWarning("Order size {Taker:F2} tokens below CLOB minimum of 5 (need ${MinUsd:F2} at price {Price})",
+                rawTaker, 5.0 * roundedPrice, roundedPrice);
+            return null;
+        }
+
+        // Use Math.Round (not Floor) to avoid floating-point precision loss
+        long makerAmount = (long)Math.Round(rawMaker * 1_000_000);
+        long takerAmount = (long)Math.Round(rawTaker * 1_000_000);
 
         if (makerAmount <= 0 || takerAmount <= 0)
         {
@@ -219,7 +237,7 @@ public sealed class ClobApiClient
                 ["signature"] = sigHex,
             },
             ["owner"] = _apiKey,
-            ["orderType"] = "FOK",
+            ["orderType"] = "GTC",
         };
 
         var bodyJson = JsonSerializer.Serialize(body, _jsonOpts);
@@ -245,9 +263,263 @@ public sealed class ClobApiClient
         _log.LogInformation("CLOB order response: {Resp}", respText[..Math.Min(respText.Length, 200)]);
 
         var respDoc = JsonDocument.Parse(respText);
-        return respDoc.RootElement.TryGetProperty("orderID", out var oid) ? oid.GetString()
-             : respDoc.RootElement.TryGetProperty("id", out var id) ? id.GetString()
+        var orderId = respDoc.RootElement.TryGetProperty("orderID", out var oid) ? oid.GetString()
+             : respDoc.RootElement.TryGetProperty("id", out var idEl) ? idEl.GetString()
              : Guid.NewGuid().ToString();
+
+        // Parse actual fill amounts from CLOB response (may differ from requested due to price improvement)
+        double actualCost = amountUsd; // fallback to requested
+        double actualShares = amountUsd / price;
+        if (respDoc.RootElement.TryGetProperty("makingAmount", out var making) &&
+            double.TryParse(making.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var makingVal) &&
+            makingVal > 0)
+        {
+            actualCost = makingVal;
+        }
+        if (respDoc.RootElement.TryGetProperty("takingAmount", out var taking) &&
+            double.TryParse(taking.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var takingVal) &&
+            takingVal > 0)
+        {
+            actualShares = takingVal;
+        }
+
+        return new OrderResult(orderId!, actualCost, actualShares);
+    }
+
+    /// <summary>
+    /// Post a GTC SELL order: selling shares (conditional tokens) for USDC.
+    /// For SELL: makerAmount = tokens (what we give), takerAmount = USDC (what we receive).
+    /// Returns OrderResult with actual fill data, or null on failure.
+    /// </summary>
+    public async Task<OrderResult?> PostMarketSellOrderAsync(
+        string tokenId, double shares, double price, CancellationToken ct)
+    {
+        var tickSize = await GetTickSizeAsync(tokenId, ct);
+        var negRisk = await GetNegRiskAsync(tokenId, ct);
+        int decimals = GetDecimals(tickSize);
+
+        double roundedPrice = Math.Round(price, decimals);
+
+        // Safety net: price below tick size rounds to 0 → can't create valid order
+        if (roundedPrice <= 0)
+        {
+            _log.LogWarning("SELL price {Price:F6} rounds to 0 at tick size {Tick} — too low to sell", price, tickSize);
+            return null;
+        }
+
+        // For SELL: makerAmount = tokens to sell (max 2 dp), takerAmount = USDC to receive (max 4 dp)
+        double rawMaker = Math.Round(shares, 2);           // tokens we give
+        double rawTaker = Math.Round(rawMaker * roundedPrice, 4);  // USDC we receive
+
+        if (rawMaker < 5.0)
+        {
+            _log.LogWarning("SELL order size {Shares:F2} tokens below CLOB minimum of 5", rawMaker);
+            return null;
+        }
+
+        long makerAmount = (long)Math.Round(rawMaker * 1_000_000);
+        long takerAmount = (long)Math.Round(rawTaker * 1_000_000);
+
+        if (makerAmount <= 0 || takerAmount <= 0)
+        {
+            _log.LogWarning("Invalid SELL amounts: maker={Maker}, taker={Taker} (price too low?)", makerAmount, takerAmount);
+            return null;
+        }
+
+        long salt = GenerateSalt();
+        var domainSep = negRisk ? _negRiskExchangeDomainSep : _exchangeDomainSep;
+
+        var orderFields = new OrderFields
+        {
+            Salt = salt,
+            Maker = _funderAddress,
+            Signer = _signerAddress,
+            Taker = "0x0000000000000000000000000000000000000000",
+            TokenId = tokenId,
+            MakerAmount = makerAmount,
+            TakerAmount = takerAmount,
+            Expiration = 0,
+            Nonce = 0,
+            FeeRateBps = 0,
+            Side = 1, // SELL = 1
+            SignatureType = _signatureType,
+        };
+
+        var signature = SignOrder(orderFields, domainSep);
+        var sigHex = "0x" + Convert.ToHexString(signature).ToLowerInvariant();
+
+        var body = new Dictionary<string, object>
+        {
+            ["order"] = new Dictionary<string, object>
+            {
+                ["salt"] = salt,
+                ["maker"] = _funderAddress,
+                ["signer"] = _signerAddress,
+                ["taker"] = "0x0000000000000000000000000000000000000000",
+                ["tokenId"] = tokenId,
+                ["makerAmount"] = makerAmount.ToString(),
+                ["takerAmount"] = takerAmount.ToString(),
+                ["expiration"] = "0",
+                ["nonce"] = "0",
+                ["feeRateBps"] = "0",
+                ["side"] = "SELL",
+                ["signatureType"] = _signatureType,
+                ["signature"] = sigHex,
+            },
+            ["owner"] = _apiKey,
+            ["orderType"] = "GTC",
+        };
+
+        var bodyJson = JsonSerializer.Serialize(body, _jsonOpts);
+        _log.LogDebug("SELL order body: {Body}", bodyJson[..Math.Min(bodyJson.Length, 200)]);
+
+        var l2Headers = BuildL2Headers("POST", "/order", bodyJson);
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{_host}/order")
+        {
+            Content = new StringContent(bodyJson, Encoding.UTF8, "application/json")
+        };
+        foreach (var h in l2Headers) req.Headers.TryAddWithoutValidation(h.Key, h.Value);
+
+        var resp = await _http.SendAsync(req, ct);
+        var respText = await resp.Content.ReadAsStringAsync(ct);
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            _log.LogError("CLOB SELL order failed: {Status} {Body}", resp.StatusCode, respText);
+            return null;
+        }
+
+        _log.LogInformation("CLOB SELL order response: {Resp}", respText[..Math.Min(respText.Length, 200)]);
+
+        var respDoc = JsonDocument.Parse(respText);
+        var orderId = respDoc.RootElement.TryGetProperty("orderID", out var oid) ? oid.GetString()
+             : respDoc.RootElement.TryGetProperty("id", out var idEl) ? idEl.GetString()
+             : Guid.NewGuid().ToString();
+
+        // For SELL: makingAmount = tokens sold, takingAmount = USDC received
+        double actualShares = shares;
+        double actualCost = shares * price;
+        if (respDoc.RootElement.TryGetProperty("makingAmount", out var making) &&
+            double.TryParse(making.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var makingVal) &&
+            makingVal > 0)
+        {
+            actualShares = makingVal;
+        }
+        if (respDoc.RootElement.TryGetProperty("takingAmount", out var taking) &&
+            double.TryParse(taking.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var takingVal) &&
+            takingVal > 0)
+        {
+            actualCost = takingVal;
+        }
+
+        return new OrderResult(orderId!, actualCost, actualShares);
+    }
+
+    // ── Order status & cancel ──────────────────────────────────────
+
+    /// <summary>
+    /// Check GTC order status. Returns "MATCHED", "LIVE", "CANCELLED", etc. or null on error.
+    /// </summary>
+    public async Task<string?> GetOrderStatusAsync(string orderId, CancellationToken ct)
+    {
+        try
+        {
+            var l2Headers = BuildL2Headers("GET", $"/data/order/{orderId}");
+            var req = new HttpRequestMessage(HttpMethod.Get, $"{_host}/data/order/{orderId}");
+            foreach (var h in l2Headers) req.Headers.TryAddWithoutValidation(h.Key, h.Value);
+
+            var resp = await _http.SendAsync(req, ct);
+            var respText = await resp.Content.ReadAsStringAsync(ct);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                _log.LogDebug("Order status check failed: {Status} {Body}", resp.StatusCode, respText);
+                return null;
+            }
+
+            var doc = JsonDocument.Parse(respText);
+            var status = doc.RootElement.TryGetProperty("status", out var s) ? s.GetString() : null;
+            _log.LogDebug("Order {OrderId} status: {Status}", orderId[..12], status);
+            return status;
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug("Order status check error: {Error}", ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Cancel an open GTC order.
+    /// </summary>
+    public async Task CancelOrderAsync(string orderId, CancellationToken ct)
+    {
+        try
+        {
+            var bodyObj = new Dictionary<string, string> { ["orderID"] = orderId };
+            var bodyJson = JsonSerializer.Serialize(bodyObj, _jsonOpts);
+
+            var l2Headers = BuildL2Headers("DELETE", "/order", bodyJson);
+            var req = new HttpRequestMessage(HttpMethod.Delete, $"{_host}/order")
+            {
+                Content = new StringContent(bodyJson, Encoding.UTF8, "application/json")
+            };
+            foreach (var h in l2Headers) req.Headers.TryAddWithoutValidation(h.Key, h.Value);
+
+            var resp = await _http.SendAsync(req, ct);
+            var respText = await resp.Content.ReadAsStringAsync(ct);
+            _log.LogInformation("Cancel order {OrderId}: {Status} {Body}",
+                orderId[..12], resp.StatusCode, respText[..Math.Min(respText.Length, 100)]);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning("Cancel order error: {Error}", ex.Message);
+        }
+    }
+
+    // ── Balance query ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Fetch USDC collateral balance from the CLOB API (L2 authenticated).
+    /// Returns balance in USD, or null on failure.
+    /// </summary>
+    public async Task<double?> GetBalanceAsync(CancellationToken ct)
+    {
+        try
+        {
+            // HMAC signs only the path (no query params) — matching py-clob-client behavior
+            var l2Headers = BuildL2Headers("GET", "/balance-allowance");
+            var req = new HttpRequestMessage(HttpMethod.Get, $"{_host}/balance-allowance?asset_type=COLLATERAL&signature_type={_signatureType}");
+            foreach (var h in l2Headers) req.Headers.TryAddWithoutValidation(h.Key, h.Value);
+
+            var resp = await _http.SendAsync(req, ct);
+            var respText = await resp.Content.ReadAsStringAsync(ct);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                _log.LogWarning("Balance check failed: {Status} {Body}", resp.StatusCode, respText);
+                return null;
+            }
+
+            var doc = JsonDocument.Parse(respText);
+            _log.LogInformation("Balance API response: {Body}", respText);
+            Console.WriteLine($"[BALANCE API] raw response: {respText}");
+            if (doc.RootElement.TryGetProperty("balance", out var balEl))
+            {
+                var balStr = balEl.GetString() ?? "0";
+                // Balance is in USDC atomic units (6 decimals)
+                if (double.TryParse(balStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var rawBal))
+                    return rawBal / 1_000_000.0;
+            }
+
+            _log.LogWarning("Balance response missing 'balance' field: {Body}", respText);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning("Balance check error: {Error}", ex.Message);
+            return null;
+        }
     }
 
     // ── L1 Headers (EIP-712 ClobAuth + Ethereum Personal Sign) ──────
@@ -513,10 +785,10 @@ public sealed class ClobApiClient
 
     private static string Base64UrlEncode(byte[] input)
     {
+        // Keep '=' padding — py-clob-client uses base64.urlsafe_b64encode which preserves it
         return Convert.ToBase64String(input)
             .Replace('+', '-')
-            .Replace('/', '_')
-            .TrimEnd('=');
+            .Replace('/', '_');
     }
 
     private static readonly JsonSerializerOptions _jsonOpts = new()

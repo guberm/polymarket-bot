@@ -80,6 +80,7 @@ class Position:
     category: str
     opened_at: float = field(default_factory=time.time)
     order_id: Optional[str] = None
+    fair_estimate_at_entry: float = 0.0  # Original Claude estimate (0 = unknown/legacy)
 
 
 @dataclass
@@ -99,6 +100,17 @@ class Trade:
     rationale: str = ""
     edge_at_entry: float = 0.0
     kelly_at_entry: float = 0.0
+    exit_reason: str = ""
+
+
+@dataclass
+class ExitSignal:
+    """Signal to close an existing position."""
+    position: Position
+    exit_reason: str  # "stop_loss", "take_profit", "edge_gone", "reestimate_exit"
+    current_price: float
+    unrealized_pnl: float
+    pnl_pct: float  # PnL as fraction of entry price
 
 
 @dataclass

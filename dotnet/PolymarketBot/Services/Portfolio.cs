@@ -109,12 +109,23 @@ public sealed class Portfolio
         var kellyRaw = b > 0 ? (b * p - q) / b : 0.0;
         kellyRaw = Math.Max(0.0, kellyRaw);
 
-        // Fractional Kelly + position cap
+        // Fractional Kelly + position cap (use portfolio value, not just cash)
         var kelly = kellyRaw * _config.KellyFraction;
-        var sizeUsd = kelly * Bankroll;
-        sizeUsd = Math.Min(sizeUsd, Bankroll * _config.MaxPositionPct);
+        var portfolioVal = Bankroll + TotalExposure();
+        var sizeUsd = kelly * portfolioVal;
+        sizeUsd = Math.Min(sizeUsd, portfolioVal * _config.MaxPositionPct);
+        sizeUsd = Math.Min(sizeUsd, Bankroll); // never exceed available cash
 
         if (sizeUsd < _config.MinTradeUsd) return null;
+
+        // CLOB minimum order size is 5 tokens → minimum USD = 5 * price
+        var minClobUsd = 5.0 * marketPrice;
+        if (sizeUsd < minClobUsd)
+        {
+            _log.LogDebug("Position ${Size:F2} below CLOB minimum ${Min:F2} (5 tokens @ {Price})",
+                sizeUsd, minClobUsd, marketPrice);
+            return null;
+        }
 
         return new Signal
         {
@@ -145,8 +156,9 @@ public sealed class Portfolio
             return false;
         }
 
+        var pv = Bankroll + TotalExposure();
         var newExposure = TotalExposure() + signal.PositionSizeUsd;
-        var maxAllowed = Bankroll * _config.MaxTotalExposurePct;
+        var maxAllowed = pv * _config.MaxTotalExposurePct;
         if (newExposure > maxAllowed)
         {
             _log.LogInformation("Risk BLOCK: total exposure ${New:F2} > limit ${Limit:F2}", newExposure, maxAllowed);
@@ -154,7 +166,7 @@ public sealed class Portfolio
         }
 
         var catExp = CategoryExposure(signal.Market.Category) + signal.PositionSizeUsd;
-        var catLimit = Bankroll * _config.MaxCategoryExposurePct;
+        var catLimit = pv * _config.MaxCategoryExposurePct;
         if (catExp > catLimit)
         {
             _log.LogInformation("Risk BLOCK: '{Category}' exposure ${Exp:F2} > limit ${Limit:F2}",
@@ -221,6 +233,121 @@ public sealed class Portfolio
 
         _log.LogInformation("Closed {Question} PnL: ${Pnl:+0.00;-0.00}", Truncate(pos.Question, 40), pnl);
         return pnl;
+    }
+
+    // -- Position review --
+
+    public void UpdatePositionPrices(Dictionary<string, double> prices)
+    {
+        foreach (var pos in Positions)
+        {
+            if (prices.TryGetValue(pos.TokenId, out var price))
+            {
+                pos.CurrentPrice = price;
+                pos.UnrealizedPnl = pos.Shares * (pos.CurrentPrice - pos.EntryPrice);
+            }
+        }
+    }
+
+    public List<ExitSignal> GenerateExitSignals()
+    {
+        var signals = new List<ExitSignal>();
+        foreach (var pos in Positions)
+        {
+            // Skip penny positions — price too low to create valid CLOB sell orders
+            // (tick size rounding makes takerAmount=0, and they're not worth selling)
+            if (pos.CurrentPrice < 0.01)
+            {
+                _log.LogDebug("Skip review for {Question} (price {Price:F4} < $0.01)",
+                    Truncate(pos.Question, 40), pos.CurrentPrice);
+                continue;
+            }
+
+            var pnl = pos.Shares * (pos.CurrentPrice - pos.EntryPrice);
+            var pnlPct = pos.EntryPrice > 0 ? (pos.CurrentPrice - pos.EntryPrice) / pos.EntryPrice : 0.0;
+
+            // Stop-loss
+            if (pnlPct < -_config.PositionStopLossPct)
+            {
+                signals.Add(new ExitSignal { Position = pos, ExitReason = "stop_loss", CurrentPrice = pos.CurrentPrice, UnrealizedPnl = pnl, PnlPct = pnlPct });
+                continue;
+            }
+
+            // Take-profit
+            if (pos.CurrentPrice >= _config.TakeProfitPrice)
+            {
+                signals.Add(new ExitSignal { Position = pos, ExitReason = "take_profit", CurrentPrice = pos.CurrentPrice, UnrealizedPnl = pnl, PnlPct = pnlPct });
+                continue;
+            }
+
+            // Edge-gone
+            if (pos.FairEstimateAtEntry > 0)
+            {
+                var fairForSide = pos.Side == Side.YES ? pos.FairEstimateAtEntry : 1.0 - pos.FairEstimateAtEntry;
+                if (pos.CurrentPrice > fairForSide + _config.ExitEdgeBuffer)
+                {
+                    signals.Add(new ExitSignal { Position = pos, ExitReason = "edge_gone", CurrentPrice = pos.CurrentPrice, UnrealizedPnl = pnl, PnlPct = pnlPct });
+                    continue;
+                }
+            }
+        }
+        return signals;
+    }
+
+    public List<Position> GetReviewCandidates()
+    {
+        var candidates = new List<Position>();
+        foreach (var pos in Positions)
+        {
+            if (pos.EntryPrice <= 0) continue;
+            var priceMove = Math.Abs(pos.CurrentPrice - pos.EntryPrice) / pos.EntryPrice;
+            if (priceMove >= _config.ReviewReestimateThresholdPct)
+                candidates.Add(pos);
+        }
+        candidates.Sort((a, b) => b.SizeUsd.CompareTo(a.SizeUsd));
+        return candidates;
+    }
+
+    // -- Balance sync --
+
+    /// <summary>
+    /// Sync bankroll from actual on-chain USDC balance.
+    /// When positions are open, on-chain USDC only shows free cash — capital
+    /// deployed in conditional tokens isn't included. Internal tracking is
+    /// more reliable, so we only replace bankroll when there are no open positions.
+    /// </summary>
+    public void SyncBalance(double actualUsdcBalance)
+    {
+        if (Positions.Count > 0)
+        {
+            // If on-chain is LOWER than internal bankroll, sync down to avoid
+            // trying to spend money we don't have (fees, failed order deductions, etc.)
+            if (actualUsdcBalance < Bankroll - 0.001)
+            {
+                var oldBankroll = Bankroll;
+                Bankroll = actualUsdcBalance;
+                _log.LogWarning(
+                    "Balance sync (downward): ${Old:F2} -> ${New:F2} (on-chain lower, {Count} positions open)",
+                    oldBankroll, Bankroll, Positions.Count);
+            }
+            else
+            {
+                _log.LogInformation(
+                    "On-chain USDC: ${Actual:F2} (internal bankroll: ${Internal:F2}, {Count} positions open — skipping sync)",
+                    actualUsdcBalance, Bankroll, Positions.Count);
+            }
+            return;
+        }
+
+        var prevBankroll = Bankroll;
+        Bankroll = actualUsdcBalance;
+        var diff = Bankroll - prevBankroll;
+        if (Math.Abs(diff) > 0.001)
+        {
+            _log.LogInformation("Balance sync: ${Old:F2} -> ${New:F2} (diff=${Diff:+0.00;-0.00})",
+                prevBankroll, Bankroll, diff);
+        }
+        HighWaterMark = Math.Max(HighWaterMark, Bankroll + TotalExposure());
     }
 
     // -- Cost tracking --

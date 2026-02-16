@@ -10,6 +10,7 @@ public sealed class BotConfig
     public double MinLiquidity { get; init; } = 5000.0;
     public double MinVolume24Hr { get; init; } = 1000.0;
     public double MinTimeToResolutionHours { get; init; } = 24.0;
+    public double MinMarketPrice { get; init; } = 0.10;
     public int MarketsPerCycle { get; init; } = 30;
 
     // Estimation
@@ -25,11 +26,19 @@ public sealed class BotConfig
 
     // Risk
     public double MaxPositionPct { get; set; } = 0.15;
-    public double MaxTotalExposurePct { get; set; } = 0.90;
-    public double MaxCategoryExposurePct { get; set; } = 0.50;
+    public double MaxTotalExposurePct { get; set; } = 1.00;
+    public double MaxCategoryExposurePct { get; set; } = 0.80;
     public double DailyStopLossPct { get; set; } = 0.20;
     public double MaxDrawdownPct { get; set; } = 0.50;
     public int MaxConcurrentPositions { get; set; } = 20;
+
+    // Position review / exit
+    public bool EnablePositionReview { get; init; } = true;
+    public double PositionStopLossPct { get; init; } = 0.30;
+    public double TakeProfitPrice { get; init; } = 0.95;
+    public double ExitEdgeBuffer { get; init; } = 0.05;
+    public double ReviewReestimateThresholdPct { get; init; } = 0.10;
+    public int ReviewEnsembleSize { get; init; } = 3;
 
     // Capital
     public double InitialBankroll { get; init; } = 10000.0;
@@ -53,8 +62,8 @@ public sealed class BotConfig
     public string ExchangeAddress { get; init; } = "";
     public string NegRiskExchangeAddress { get; init; } = "";
 
-    // Persistence
-    public string DataDir { get; init; } = "data";
+    // Persistence (shared between Python and .NET)
+    public string DataDir { get; init; } = "../../data";
 
     public static BotConfig FromEnv()
     {
@@ -65,6 +74,7 @@ public sealed class BotConfig
             MinLiquidity = double.Parse(Env("MIN_LIQUIDITY", "5000")),
             MinVolume24Hr = double.Parse(Env("MIN_VOLUME_24HR", "1000")),
             MinTimeToResolutionHours = double.Parse(Env("MIN_TIME_TO_RESOLUTION_HOURS", "24")),
+            MinMarketPrice = double.Parse(Env("MIN_MARKET_PRICE", "0.10")),
             MarketsPerCycle = int.Parse(Env("MARKETS_PER_CYCLE", "30")),
             ClaudeModel = Env("CLAUDE_MODEL", "claude-sonnet-4-20250514"),
             EnsembleSize = int.Parse(Env("ENSEMBLE_SIZE", "5")),
@@ -72,9 +82,15 @@ public sealed class BotConfig
             KellyFraction = double.Parse(Env("KELLY_FRACTION", "0.25")),
             MinEdge = double.Parse(Env("MIN_EDGE", "0.08")),
             MinTradeUsd = double.Parse(Env("MIN_TRADE_USD", "1.0")),
+            EnablePositionReview = Env("ENABLE_POSITION_REVIEW", "true").Equals("true", StringComparison.OrdinalIgnoreCase),
+            PositionStopLossPct = double.Parse(Env("POSITION_STOP_LOSS_PCT", "0.30")),
+            TakeProfitPrice = double.Parse(Env("TAKE_PROFIT_PRICE", "0.95")),
+            ExitEdgeBuffer = double.Parse(Env("EXIT_EDGE_BUFFER", "0.05")),
+            ReviewReestimateThresholdPct = double.Parse(Env("REVIEW_REESTIMATE_THRESHOLD_PCT", "0.10")),
+            ReviewEnsembleSize = int.Parse(Env("REVIEW_ENSEMBLE_SIZE", "3")),
             MaxPositionPct = double.Parse(Env("MAX_POSITION_PCT", "0.15")),
-            MaxTotalExposurePct = double.Parse(Env("MAX_TOTAL_EXPOSURE_PCT", "0.90")),
-            MaxCategoryExposurePct = double.Parse(Env("MAX_CATEGORY_EXPOSURE_PCT", "0.50")),
+            MaxTotalExposurePct = double.Parse(Env("MAX_TOTAL_EXPOSURE_PCT", "1.00")),
+            MaxCategoryExposurePct = double.Parse(Env("MAX_CATEGORY_EXPOSURE_PCT", "0.80")),
             DailyStopLossPct = double.Parse(Env("DAILY_STOP_LOSS_PCT", "0.20")),
             MaxDrawdownPct = double.Parse(Env("MAX_DRAWDOWN_PCT", "0.50")),
             MaxConcurrentPositions = int.Parse(Env("MAX_CONCURRENT_POSITIONS", "20")),
@@ -92,7 +108,7 @@ public sealed class BotConfig
             ClobHost = Env("CLOB_HOST", ""),
             ExchangeAddress = Env("EXCHANGE_ADDRESS", ""),
             NegRiskExchangeAddress = Env("NEG_RISK_EXCHANGE_ADDRESS", ""),
-            DataDir = Env("DATA_DIR", "data"),
+            DataDir = Env("DATA_DIR", "../../data"),
         };
     }
 

@@ -16,17 +16,27 @@ log = logging.getLogger("bot.scanner")
 # Keywords for rough category classification from event slugs/titles
 CATEGORY_KEYWORDS = {
     "politics": ["president", "election", "congress", "senate", "governor", "vote", "party",
-                  "democrat", "republican", "trump", "biden", "political", "inaugur"],
+                  "democrat", "republican", "trump", "biden", "political", "inaugur",
+                  "legislation", "supreme court", "cabinet", "impeach", "primary"],
+    "geopolitics": ["iran", "israel", "strike", "invade", "invasion", "war", "military",
+                    "nato", "sanction", "nuclear", "missile", "ceasefire", "peace deal",
+                    "china", "taiwan", "russia", "ukraine", "north korea", "tariff"],
     "sports": ["nfl", "nba", "mlb", "nhl", "soccer", "football", "basketball", "baseball",
                "tennis", "ufc", "fight", "championship", "super bowl", "world series",
-               "premier league", "match", "game", "serie a", "ncaa"],
+               "premier league", "match", "game", "serie a", "ncaa", "ligue 1",
+               "olympics", "medal", "la liga", "bundesliga", "win on 202", "rio open",
+               "open:", "grand slam"],
     "crypto": ["bitcoin", "btc", "ethereum", "eth", "crypto", "solana", "sol", "token",
-               "defi", "blockchain", "coin", "memecoin"],
+               "defi", "blockchain", "coin", "memecoin", "fdv", "airdrop"],
+    "tech": ["ai model", "claude", "gpt", "openai", "anthropic", "google ai", "apple",
+             "microsoft", "tesla", "spacex", "launch", "release", "chip", "semiconductor"],
+    "social_media": ["tweet", "post", "elon musk", "follower", "subscriber", "tiktok",
+                     "youtube", "instagram", "x.com"],
     "weather": ["weather", "temperature", "hurricane", "storm", "rainfall", "snow", "climate"],
     "entertainment": ["oscar", "grammy", "emmy", "movie", "film", "tv", "show", "album",
-                      "music", "celebrity", "award"],
+                      "music", "celebrity", "award", "box office"],
     "finance": ["fed", "interest rate", "inflation", "gdp", "stock", "market", "s&p",
-                "nasdaq", "dow", "recession", "unemployment"],
+                "nasdaq", "dow", "recession", "unemployment", "spx", "treasury"],
 }
 
 
@@ -160,6 +170,13 @@ class MarketScanner:
             if volume_24hr < self.config.min_volume_24hr:
                 return None
 
+            # Price filter — skip markets where neither side is in the tradeable range
+            # Markets at extreme prices (e.g. YES=0.001, NO=0.999) have no FOK liquidity
+            min_p = self.config.min_market_price
+            max_p = 1.0 - min_p
+            if not (min_p <= yes_price <= max_p or min_p <= no_price <= max_p):
+                return None
+
             # Time to resolution filter
             end_date_str = mkt.get("endDate", "")
             if end_date_str:
@@ -212,6 +229,15 @@ class MarketScanner:
             if any(kw in text for kw in keywords):
                 return category
         return "other"
+
+    def get_market_prices(self, token_ids: list[str]) -> dict[str, float]:
+        """Fetch current prices for multiple tokens. Returns dict of token_id -> midpoint price."""
+        prices = {}
+        for tid in token_ids:
+            p = self.get_market_price(tid)
+            if p is not None and p > 0:
+                prices[tid] = p
+        return prices
 
     def get_market_price(self, token_id: str) -> Optional[float]:
         """Fetch current price for a single token from the CLOB API."""

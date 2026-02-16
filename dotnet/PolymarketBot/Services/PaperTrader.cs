@@ -24,6 +24,7 @@ public sealed class PaperTrader : ITrader
             CurrentPrice = price,
             UnrealizedPnl = 0.0,
             Category = market.Category,
+            FairEstimateAtEntry = signal.Estimate.FairProbability,
         };
         portfolio.OpenPosition(position);
 
@@ -42,6 +43,30 @@ public sealed class PaperTrader : ITrader
             Rationale = signal.Estimate.ReasoningSummary,
             EdgeAtEntry = signal.Edge,
             KellyAtEntry = signal.KellyFraction,
+        };
+
+        return Task.FromResult<Trade?>(trade);
+    }
+
+    public Task<Trade?> ExecuteSellAsync(ExitSignal exitSignal, Portfolio portfolio, CancellationToken ct = default)
+    {
+        var pos = exitSignal.Position;
+        var pnl = portfolio.ClosePosition(pos.ConditionId, exitSignal.CurrentPrice);
+
+        var trade = new Trade
+        {
+            TradeId = Guid.NewGuid().ToString(),
+            ConditionId = pos.ConditionId,
+            Question = pos.Question,
+            Side = pos.Side,
+            Action = TradeAction.SELL,
+            Price = exitSignal.CurrentPrice,
+            SizeUsd = pos.SizeUsd,
+            Shares = pos.Shares,
+            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0,
+            IsPaper = true,
+            Rationale = $"Exit: {exitSignal.ExitReason}",
+            ExitReason = exitSignal.ExitReason,
         };
 
         return Task.FromResult<Trade?>(trade);

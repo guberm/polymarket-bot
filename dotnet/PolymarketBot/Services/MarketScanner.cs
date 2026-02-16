@@ -9,17 +9,27 @@ public sealed class MarketScanner
     private static readonly Dictionary<string, string[]> CategoryKeywords = new()
     {
         ["politics"] = ["president", "election", "congress", "senate", "governor", "vote", "party",
-                        "democrat", "republican", "trump", "biden", "political", "inaugur"],
+                        "democrat", "republican", "trump", "biden", "political", "inaugur",
+                        "legislation", "supreme court", "cabinet", "impeach", "primary"],
+        ["geopolitics"] = ["iran", "israel", "strike", "invade", "invasion", "war", "military",
+                           "nato", "sanction", "nuclear", "missile", "ceasefire", "peace deal",
+                           "china", "taiwan", "russia", "ukraine", "north korea", "tariff"],
         ["sports"] = ["nfl", "nba", "mlb", "nhl", "soccer", "football", "basketball", "baseball",
                       "tennis", "ufc", "fight", "championship", "super bowl", "world series",
-                      "premier league", "match", "game", "serie a", "ncaa"],
+                      "premier league", "match", "game", "serie a", "ncaa", "ligue 1",
+                      "olympics", "medal", "la liga", "bundesliga", "win on 202", "rio open",
+                      "open:", "grand slam"],
         ["crypto"] = ["bitcoin", "btc", "ethereum", "eth", "crypto", "solana", "sol", "token",
-                      "defi", "blockchain", "coin", "memecoin"],
+                      "defi", "blockchain", "coin", "memecoin", "fdv", "airdrop"],
+        ["tech"] = ["ai model", "claude", "gpt", "openai", "anthropic", "google ai", "apple",
+                    "microsoft", "tesla", "spacex", "launch", "release", "chip", "semiconductor"],
+        ["social_media"] = ["tweet", "post", "elon musk", "follower", "subscriber", "tiktok",
+                            "youtube", "instagram", "x.com"],
         ["weather"] = ["weather", "temperature", "hurricane", "storm", "rainfall", "snow", "climate"],
         ["entertainment"] = ["oscar", "grammy", "emmy", "movie", "film", "tv", "show", "album",
-                             "music", "celebrity", "award"],
+                             "music", "celebrity", "award", "box office"],
         ["finance"] = ["fed", "interest rate", "inflation", "gdp", "stock", "market", "s&p",
-                       "nasdaq", "dow", "recession", "unemployment"],
+                       "nasdaq", "dow", "recession", "unemployment", "spx", "treasury"],
     };
 
     private readonly BotConfig _config;
@@ -157,6 +167,15 @@ public sealed class MarketScanner
             if (liquidity < _config.MinLiquidity) return null;
             if (volume24Hr < _config.MinVolume24Hr) return null;
 
+            // Price filter — skip markets where neither side is in the tradeable range
+            // Markets at extreme prices (e.g. YES=0.001, NO=0.999) have no FOK liquidity
+            var minP = _config.MinMarketPrice;
+            var maxP = 1.0 - minP;
+            var yesInRange = yesPrice >= minP && yesPrice <= maxP;
+            var noInRange = noPrice >= minP && noPrice <= maxP;
+            if (!yesInRange && !noInRange)
+                return null;
+
             var endDateStr = mkt.GetPropertyOrDefault("endDate", "");
             if (!string.IsNullOrEmpty(endDateStr))
             {
@@ -228,6 +247,19 @@ public sealed class MarketScanner
                 return category;
         }
         return "other";
+    }
+
+    public async Task<Dictionary<string, double>> GetMarketPricesAsync(
+        IEnumerable<string> tokenIds, CancellationToken ct = default)
+    {
+        var prices = new Dictionary<string, double>();
+        foreach (var tid in tokenIds)
+        {
+            var p = await GetMarketPriceAsync(tid, ct);
+            if (p.HasValue && p.Value > 0)
+                prices[tid] = p.Value;
+        }
+        return prices;
     }
 
     public async Task<double?> GetMarketPriceAsync(string tokenId, CancellationToken ct = default)

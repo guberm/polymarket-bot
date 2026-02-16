@@ -92,6 +92,8 @@ def main():
         log.info("Starting fresh")
         if con:
             print(f"[{ts()}] START: fresh portfolio, ${portfolio.bankroll:.2f} bankroll")
+        # Persist initial state immediately so portfolio.json exists from the start
+        save_snapshot(portfolio.snapshot(), config.data_dir)
 
     scanner = MarketScanner(config)
     estimator = Estimator(config)
@@ -101,6 +103,14 @@ def main():
             log.error("POLYMARKET_PRIVATE_KEY or POLYMARKET_API_KEY required for live trading")
             sys.exit(1)
         trader = LiveTrader(config)
+
+        # Sync bankroll from actual on-chain balance
+        init_bal = trader.get_balance()
+        if init_bal is not None:
+            portfolio.sync_balance(init_bal)
+            log.info(f"Initial USDC balance: ${init_bal:.2f}")
+            if con:
+                print(f"[{ts()}] BALANCE: ${init_bal:.2f} (on-chain)")
     else:
         trader = PaperTrader()
 
@@ -153,6 +163,67 @@ def main():
             print(f"  Positions: {len(portfolio.positions)} | API cost: ${portfolio.total_api_cost:.4f}")
             print(f"{'─'*60}")
 
+        # ── Position review phase ─────────────────────────────────
+        if config.enable_position_review and portfolio.positions:
+            log.info(f"Reviewing {len(portfolio.positions)} open positions...")
+            if con:
+                print(f"[{ts()}] REVIEW: checking {len(portfolio.positions)} positions...")
+
+            # Fetch current prices for all held tokens
+            token_ids = [p.token_id for p in portfolio.positions]
+            prices = scanner.get_market_prices(token_ids)
+            portfolio.update_position_prices(prices)
+
+            # Tier 1: free rule-based exit checks
+            penny_count = sum(1 for p in portfolio.positions if p.current_price < 0.01)
+            exit_signals = portfolio.generate_exit_signals()
+            exits_this_cycle = 0
+
+            if penny_count > 0:
+                log.info(f"  Skipping {penny_count} penny positions (price < $0.01, unsellable)")
+                if con:
+                    print(f"[{ts()}]   SKIP: {penny_count} penny positions (price < $0.01)")
+
+            if exit_signals:
+                log.info(f"  Found {len(exit_signals)} exit signals")
+                if con:
+                    print(f"[{ts()}]   Found {len(exit_signals)} exit signal(s)")
+            else:
+                log.info("  No exit signals — all positions OK")
+                if con:
+                    print(f"[{ts()}]   All positions OK, no exits needed")
+
+            for es in exit_signals:
+                if not running or portfolio.is_halted:
+                    break
+
+                log.info(
+                    f"  EXIT {es.exit_reason}: {es.position.question[:50]}... "
+                    f"entry={es.position.entry_price:.4f} -> {es.current_price:.4f} "
+                    f"(PnL={es.pnl_pct:+.1%})"
+                )
+                if con:
+                    print(f"[{ts()}]   EXIT ({es.exit_reason}): {es.position.question[:50]}...")
+                    print(f"[{ts()}]     {es.position.entry_price:.4f} -> {es.current_price:.4f} PnL={es.pnl_pct:+.1%}")
+
+                trade = trader.execute_sell(es, portfolio)
+                if trade:
+                    append_trade(trade, config.data_dir)
+                    save_snapshot(portfolio.snapshot(), config.data_dir)
+                    exits_this_cycle += 1
+                    if con:
+                        print(f"[{ts()}]     SOLD OK")
+                else:
+                    if con:
+                        print(f"[{ts()}]     SELL FAILED (min 5 tokens or order not filled)")
+
+            if con:
+                print(
+                    f"[{ts()}] REVIEW: {exits_this_cycle} exits, "
+                    f"bankroll=${portfolio.bankroll:.2f}, "
+                    f"{len(portfolio.positions)} positions remaining"
+                )
+
         try:
             log.info("Scanning markets...")
             if con:
@@ -163,6 +234,21 @@ def main():
 
             if con:
                 print(f"[{ts()}] SCAN: {len(markets)} total, evaluating top {len(eligible)}")
+
+            # Pre-check: skip estimation entirely if exposure is at the limit
+            # Use portfolio value (bankroll + exposure) as base, not just bankroll
+            pv = portfolio.bankroll + portfolio.total_exposure()
+            exposure_room = config.max_total_exposure_pct * pv - portfolio.total_exposure()
+            min_realistic_position = config.max_position_pct * pv * 0.5
+            # Also can't trade more than available cash
+            exposure_room = min(exposure_room, portfolio.bankroll)
+            at_capacity = exposure_room < min_realistic_position
+            if at_capacity:
+                log.info(
+                    f"Exposure near limit: room=${exposure_room:.2f} < min realistic position=${min_realistic_position:.2f} — skipping estimation to save API costs"
+                )
+                if con:
+                    print(f"[{ts()}] EXPOSURE FULL: room=${exposure_room:.2f} < ${min_realistic_position:.2f}, skipping evaluations")
 
             for i, market in enumerate(eligible, 1):
                 if not running or portfolio.is_halted:
@@ -175,15 +261,19 @@ def main():
                         print(f"[{ts()}]   [{i:>2}/{len(eligible)}] SKIP (held): {market.question[:55]}")
                     continue
 
+                # Skip estimation entirely if at exposure limit (saves API costs)
+                if at_capacity:
+                    continue
+
                 # Estimate fair value
                 log.info(f"  [{i}/{len(eligible)}] Evaluating: {market.question[:60]}...")
                 if con:
-                    print(f"[{ts()}]   [{i:>2}/{len(eligible)}] EVAL: {market.question[:55]}...", end="", flush=True)
+                    print(f"[{ts()}]   [{i:>2}/{len(eligible)}] EVAL: {market.question[:55]}...")
                 estimate = estimator.estimate(market)
                 if estimate is None:
                     log.info(f"  [{i}/{len(eligible)}] SKIP (estimation failed)")
                     if con:
-                        print(" -> FAILED")
+                        print(f"[{ts()}]   [{i:>2}/{len(eligible)}] -> FAILED")
                     continue
 
                 # Agent pays for its own inference
@@ -192,7 +282,7 @@ def main():
                 if portfolio.bankroll <= 0:
                     log.warning("Bankroll depleted by API costs — agent is dead")
                     if con:
-                        print(f"\n[{ts()}] DEAD: bankroll depleted by API costs")
+                        print(f"[{ts()}] DEAD: bankroll depleted by API costs")
                     portfolio.is_halted = True
                     break
 
@@ -208,7 +298,7 @@ def main():
                         f"(edge={best_edge:+.1%}, need>{config.min_edge:.0%})"
                     )
                     if con:
-                        print(f" -> {estimate.fair_probability:.0%} (edge={best_edge:+.1%}) SKIP")
+                        print(f"[{ts()}]   [{i:>2}/{len(eligible)}] -> {estimate.fair_probability:.0%} (edge={best_edge:+.1%}) SKIP")
                     continue
 
                 # Risk check
@@ -219,7 +309,7 @@ def main():
                         f"${signal_obj.position_size_usd:.2f}"
                     )
                     if con:
-                        print(f" -> {estimate.fair_probability:.0%} RISK BLOCKED")
+                        print(f"[{ts()}]   [{i:>2}/{len(eligible)}] -> {estimate.fair_probability:.0%} RISK BLOCKED")
                     continue
 
                 # Execute
@@ -228,11 +318,23 @@ def main():
                     f"{market.question[:50]}... ${signal_obj.position_size_usd:.2f} @ {signal_obj.market_price:.3f}"
                 )
                 if con:
-                    print(f" -> {estimate.fair_probability:.0%} edge={signal_obj.edge:.1%}")
-                    print(f"[{ts()}]   [{i:>2}/{len(eligible)}] >>> BUY {signal_obj.side.value} ${signal_obj.position_size_usd:.2f} @ {signal_obj.market_price:.3f}...", end="", flush=True)
+                    print(f"[{ts()}]   [{i:>2}/{len(eligible)}] -> {estimate.fair_probability:.0%} edge={signal_obj.edge:.1%}")
+                    print(f"[{ts()}]   [{i:>2}/{len(eligible)}] >>> BUY {signal_obj.side.value} ${signal_obj.position_size_usd:.2f} @ {signal_obj.market_price:.3f}...")
 
                 trade = trader.execute(signal_obj, portfolio)
                 if trade:
+                    if con:
+                        print(f"[{ts()}]   [{i:>2}/{len(eligible)}] TRADE OK (EV=${signal_obj.expected_value:.2f})")
+
+                    # Log on-chain USDC balance after trade (diagnostic only;
+                    # internal bookkeeping is authoritative when positions are open)
+                    if isinstance(trader, LiveTrader):
+                        bal = trader.get_balance()
+                        if bal is not None:
+                            log.info(f"On-chain USDC after trade: ${bal:.2f}")
+                            if con:
+                                print(f"[{ts()}]   USDC balance: ${bal:.2f}")
+
                     append_trade(trade, config.data_dir)
                     save_snapshot(portfolio.snapshot(), config.data_dir)
                     trades_this_cycle += 1
@@ -242,12 +344,10 @@ def main():
                         f"${trade.size_usd:.2f} @ {trade.price:.3f} "
                         f"(edge={signal_obj.edge:.1%}, EV=${signal_obj.expected_value:.2f})"
                     )
-                    if con:
-                        print(f" OK (EV=${signal_obj.expected_value:.2f})")
                 else:
                     log.warning(f"  [{i}/{len(eligible)}] TRADE FAILED: order execution error")
                     if con:
-                        print(f" FAILED")
+                        print(f"[{ts()}]   [{i:>2}/{len(eligible)}] TRADE FAILED")
 
             # Cycle summary
             log.info(

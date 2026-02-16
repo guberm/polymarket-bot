@@ -11,14 +11,19 @@ Available in **Python** and **.NET 8** — both implementations share the same l
 ```
 Every 10 minutes:
   1. Scan all active Polymarket markets (Gamma API)
-  2. Filter by liquidity, volume, and time to resolution
-  3. Estimate fair probability for each market (N independent Claude calls → trimmed mean)
-  4. Find mispricing > 8% between estimate and market price
-  5. Size position using fractional Kelly criterion (max 15% of bankroll)
-  6. Check risk limits (per-position, per-category, total exposure, drawdown)
-  7. Execute trade (paper or live)
-  8. Deduct API costs from bankroll
-  9. Save state and repeat
+  2. Review existing positions — fetch current prices, check exit rules
+     - Stop-loss: sell if position dropped > 30%
+     - Take-profit: sell if price reached 0.95+
+     - Edge-gone: sell if market moved past our original fair estimate
+     - Skip penny positions (price < $0.01, unsellable on CLOB)
+  3. Filter new markets by liquidity, volume, and time to resolution
+  4. Estimate fair probability for each market (N independent Claude calls → trimmed mean)
+  5. Find mispricing > 8% between estimate and market price
+  6. Size position using fractional Kelly criterion (max 15% of bankroll)
+  7. Check risk limits (per-position, per-category, total exposure, drawdown)
+  8. Execute trade (paper or live via CLOB GTC orders)
+  9. Deduct API costs from bankroll
+  10. Save state and repeat
 ```
 
 ## Quick Start
@@ -124,6 +129,10 @@ All parameters are set via environment variables. Both implementations use the s
 | `MAX_DRAWDOWN_PCT` | `0.50` | Halt if drawdown exceeds 50% |
 | `MAX_CONCURRENT_POSITIONS` | `20` | Max open positions |
 | `MIN_TRADE_USD` | `1.0` | Minimum trade size in USD |
+| `ENABLE_POSITION_REVIEW` | `true` | Review positions for exits each cycle |
+| `POSITION_STOP_LOSS_PCT` | `0.30` | Sell if position drops > 30% |
+| `TAKE_PROFIT_PRICE` | `0.95` | Sell if price reaches 0.95+ |
+| `EXIT_EDGE_BUFFER` | `0.05` | Buffer before edge-gone exit triggers |
 | `POLYMARKET_PRIVATE_KEY` | — | Wallet private key (live trading) |
 | `POLYMARKET_FUNDER_ADDRESS` | — | Funder address (live trading) |
 | `POLYMARKET_SIGNATURE_TYPE` | `0` | Signature type (0=EOA, 1=GNOSIS_SAFE) |
@@ -139,11 +148,11 @@ All parameters are set via environment variables. Both implementations use the s
 python/                        ← Python implementation
   main.py                        Orchestration loop
   config.py                      BotConfig dataclass (all env vars)
-  models.py                      Domain models (MarketInfo, Estimate, Signal, Position, Trade)
-  market_scanner.py              Gamma API integration, market filtering
+  models.py                      Domain models (MarketInfo, Estimate, Signal, Position, Trade, ExitSignal)
+  market_scanner.py              Gamma API integration, market filtering, batch price fetch
   estimator.py                   Claude ensemble estimation (trimmed mean)
-  portfolio.py                   Kelly sizing, risk management, API cost tracking
-  trader.py                      PaperTrader + LiveTrader (py-clob-client)
+  portfolio.py                   Kelly sizing, risk management, position review, API cost tracking
+  trader.py                      PaperTrader + LiveTrader (buy & sell via py-clob-client)
   persistence.py                 JSON state + JSONL trade log
   logger_setup.py                Colored console + JSON file logging
   requirements.txt               Python dependencies
@@ -151,13 +160,13 @@ python/                        ← Python implementation
 dotnet/PolymarketBot/          ← .NET 8 implementation
   Program.cs                     Orchestration loop (async)
   BotConfig.cs                   Config from env vars
-  Models/                        Domain models
+  Models/                        Domain models (including ExitSignal)
   Services/
-    MarketScanner.cs             Gamma API integration, market filtering
+    MarketScanner.cs             Gamma API integration, market filtering, batch price fetch
     Estimator.cs                 Claude ensemble via Anthropic REST API
-    Portfolio.cs                 Kelly sizing, risk management, API cost tracking
-    ClobApiClient.cs             CLOB API auth (EIP-712 + HMAC), order signing/posting
-    LiveTrader.cs                Live execution via CLOB API
+    Portfolio.cs                 Kelly sizing, risk management, position review, API cost tracking
+    ClobApiClient.cs             CLOB API auth (EIP-712 + HMAC), order signing/posting (buy & sell)
+    LiveTrader.cs                Live execution via CLOB API (buy & sell with GTC polling)
     PaperTrader.cs               Simulated execution
     PersistenceService.cs        Atomic JSON save + JSONL trade log
     JsonFileLoggerProvider.cs    JSON lines file logger
@@ -203,6 +212,17 @@ Actual bet = 0.25 × 25% = 6.25% of bankroll
 ```
 
 This is then capped by `MAX_POSITION_PCT` (default 15%) and must pass all risk checks before execution.
+
+### Position Review & Exits
+
+Each cycle, before scanning for new trades, the bot reviews all open positions:
+
+- **Stop-loss** — sell if price dropped > 30% from entry
+- **Take-profit** — sell if price reached 0.95+ (near certain resolution)
+- **Edge-gone** — sell if the market price moved past the original fair estimate (edge evaporated)
+- **Penny filter** — skip positions priced below $0.01 (can't create valid CLOB sell orders at sub-cent prices)
+
+Sell orders use GTC (Good-Till-Cancelled) with a 6-second fill timeout. Positions below 5 tokens (CLOB minimum) are skipped.
 
 ### Risk Management
 

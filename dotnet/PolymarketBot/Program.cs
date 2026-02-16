@@ -104,6 +104,8 @@ else
 {
     log.LogInformation("Starting fresh");
     Con($"START: fresh portfolio, ${portfolio.Bankroll:F2} bankroll");
+    // Persist initial state immediately so portfolio.json exists from the start
+    PersistenceService.SaveSnapshot(portfolio.Snapshot(), config.DataDir);
 }
 
 // ── Services ────────────────────────────────────────────────────
@@ -131,6 +133,15 @@ if (config.LiveTrading)
     Con("CLOB API credentials initialized");
     var liveTrader = new LiveTrader(clobClient, loggerFactory.CreateLogger<LiveTrader>());
     trader = liveTrader;
+
+    // Sync bankroll from actual on-chain balance
+    var initBal = await clobClient.GetBalanceAsync(cts.Token);
+    if (initBal is not null)
+    {
+        portfolio.SyncBalance(initBal.Value);
+        log.LogInformation("Initial USDC balance: ${Balance:F2}", initBal.Value);
+        Con($"BALANCE: ${initBal.Value:F2} (on-chain)");
+    }
 }
 else
 {
@@ -188,6 +199,68 @@ while (!cts.Token.IsCancellationRequested)
         Console.WriteLine(new string('\u2500', 60));
     }
 
+    // ── Position review phase ─────────────────────────────────
+    if (config.EnablePositionReview && portfolio.Positions.Count > 0)
+    {
+        log.LogInformation("Reviewing {Count} open positions...", portfolio.Positions.Count);
+        Con($"REVIEW: checking {portfolio.Positions.Count} positions...");
+
+        var tokenIds = portfolio.Positions.Select(p => p.TokenId).ToList();
+        var prices = await scanner.GetMarketPricesAsync(tokenIds, cts.Token);
+        portfolio.UpdatePositionPrices(prices);
+
+        var pennyCount = portfolio.Positions.Count(p => p.CurrentPrice < 0.01);
+        var exitSignals = portfolio.GenerateExitSignals();
+        var exitsThisCycle = 0;
+
+        if (pennyCount > 0)
+        {
+            log.LogInformation("  Skipping {Count} penny positions (price < $0.01, unsellable)", pennyCount);
+            Con($"  SKIP: {pennyCount} penny positions (price < $0.01)");
+        }
+
+        if (exitSignals.Count > 0)
+        {
+            log.LogInformation("  Found {Count} exit signals", exitSignals.Count);
+            Con($"  Found {exitSignals.Count} exit signal(s)");
+        }
+        else
+        {
+            log.LogInformation("  No exit signals — all positions OK");
+            Con("  All positions OK, no exits needed");
+        }
+
+        foreach (var es in exitSignals)
+        {
+            if (cts.Token.IsCancellationRequested || portfolio.IsHalted)
+                break;
+
+            log.LogInformation(
+                "  EXIT {Reason}: {Question} entry={Entry:F4} -> {Current:F4} (PnL={Pnl:+0.0%;-0.0%})",
+                es.ExitReason, Truncate(es.Position.Question, 50), es.Position.EntryPrice, es.CurrentPrice, es.PnlPct);
+            if (console_)
+            {
+                Con($"  EXIT ({es.ExitReason}): {Truncate(es.Position.Question, 50)}...");
+                Con($"    {es.Position.EntryPrice:F4} -> {es.CurrentPrice:F4} PnL={es.PnlPct:+0.0%;-0.0%}");
+            }
+
+            var sellTrade = await trader.ExecuteSellAsync(es, portfolio, cts.Token);
+            if (sellTrade is not null)
+            {
+                PersistenceService.AppendTrade(sellTrade, config.DataDir);
+                PersistenceService.SaveSnapshot(portfolio.Snapshot(), config.DataDir);
+                exitsThisCycle++;
+                Con($"    SOLD OK");
+            }
+            else
+            {
+                Con($"    SELL FAILED (min 5 tokens or order not filled)");
+            }
+        }
+
+        Con($"REVIEW: {exitsThisCycle} exits, bankroll=${portfolio.Bankroll:F2}, {portfolio.Positions.Count} positions remaining");
+    }
+
     try
     {
         log.LogInformation("Scanning markets...");
@@ -197,6 +270,22 @@ while (!cts.Token.IsCancellationRequested)
         var tradesThisCycle = 0;
 
         Con($"SCAN: {markets.Count} total, evaluating top {eligible.Count}");
+
+        // Pre-check: skip estimation entirely if exposure is at the limit
+        // Use portfolio value (bankroll + exposure) as base, not just bankroll
+        var pv = portfolio.Bankroll + portfolio.TotalExposure();
+        var exposureRoom = config.MaxTotalExposurePct * pv - portfolio.TotalExposure();
+        var minRealisticPosition = config.MaxPositionPct * pv * 0.5;
+        // Also can't trade more than available cash
+        exposureRoom = Math.Min(exposureRoom, portfolio.Bankroll);
+        var atCapacity = exposureRoom < minRealisticPosition;
+        if (atCapacity)
+        {
+            log.LogInformation(
+                "Exposure near limit: room=${Room:F2} < min realistic position=${MinPos:F2} — skipping estimation to save API costs",
+                exposureRoom, minRealisticPosition);
+            Con($"EXPOSURE FULL: room=${exposureRoom:F2} < ${minRealisticPosition:F2}, skipping evaluations");
+        }
 
         for (var i = 0; i < eligible.Count; i++)
         {
@@ -213,14 +302,18 @@ while (!cts.Token.IsCancellationRequested)
                 continue;
             }
 
+            // Skip estimation entirely if at exposure limit (saves API costs)
+            if (atCapacity)
+                continue;
+
             // Estimate fair value
             log.LogInformation("  {Idx} Evaluating: {Question}...", idx, Truncate(market.Question, 60));
-            if (console_) Console.Write($"[{Ts()}]   {idx} EVAL: {Truncate(market.Question, 55)}...");
+            Con($"  {idx} EVAL: {Truncate(market.Question, 55)}...");
             var estimate = await estimator.EstimateAsync(market, cts.Token);
             if (estimate is null)
             {
                 log.LogInformation("  {Idx} SKIP (estimation failed)", idx);
-                if (console_) Console.WriteLine(" -> FAILED");
+                Con($"  {idx} -> FAILED");
                 continue;
             }
 
@@ -230,7 +323,7 @@ while (!cts.Token.IsCancellationRequested)
             if (portfolio.Bankroll <= 0)
             {
                 log.LogWarning("Bankroll depleted by API costs — agent is dead");
-                if (console_) Console.WriteLine($"\n[{Ts()}] DEAD: bankroll depleted by API costs");
+                Con("DEAD: bankroll depleted by API costs");
                 portfolio.IsHalted = true;
                 break;
             }
@@ -245,7 +338,7 @@ while (!cts.Token.IsCancellationRequested)
                 log.LogInformation(
                     "  {Idx} SKIP (no edge): fair={Fair:P1} vs market={Market:P1} (edge={Edge:+0.0%;-0.0%}, need>{Min:P0})",
                     idx, estimate.FairProbability, market.OutcomeYesPrice, bestEdge, config.MinEdge);
-                if (console_) Console.WriteLine($" -> {estimate.FairProbability:P0} (edge={bestEdge:+0.0%;-0.0%}) SKIP");
+                Con($"  {idx} -> {estimate.FairProbability:P0} (edge={bestEdge:+0.0%;-0.0%}) SKIP");
                 continue;
             }
 
@@ -255,7 +348,7 @@ while (!cts.Token.IsCancellationRequested)
                 log.LogInformation(
                     "  {Idx} SKIP (risk limit): {Side} {Question} ${Size:F2}",
                     idx, signal.Side, Truncate(market.Question, 40), signal.PositionSizeUsd);
-                if (console_) Console.WriteLine($" -> {estimate.FairProbability:P0} RISK BLOCKED");
+                Con($"  {idx} -> {estimate.FairProbability:P0} RISK BLOCKED");
                 continue;
             }
 
@@ -265,13 +358,25 @@ while (!cts.Token.IsCancellationRequested)
                 idx, signal.Side, Truncate(market.Question, 50), signal.PositionSizeUsd, signal.MarketPrice);
             if (console_)
             {
-                Console.WriteLine($" -> {estimate.FairProbability:P0} edge={signal.Edge:P1}");
-                Console.Write($"[{Ts()}]   {idx} >>> BUY {signal.Side} ${signal.PositionSizeUsd:F2} @ {signal.MarketPrice:F3}...");
+                Con($"  {idx} -> {estimate.FairProbability:P0} edge={signal.Edge:P1}");
+                Con($"  {idx} >>> BUY {signal.Side} ${signal.PositionSizeUsd:F2} @ {signal.MarketPrice:F3}...");
             }
 
             var trade = await trader.ExecuteAsync(signal, portfolio, cts.Token);
             if (trade is not null)
             {
+                // Log on-chain USDC balance after trade (diagnostic only;
+                // internal bookkeeping is authoritative when positions are open)
+                if (trader is LiveTrader lt)
+                {
+                    var bal = await lt.GetBalanceAsync(cts.Token);
+                    if (bal is not null)
+                    {
+                        log.LogInformation("On-chain USDC after trade: ${Balance:F2}", bal.Value);
+                        Con($"  USDC balance: ${bal.Value:F2}");
+                    }
+                }
+
                 PersistenceService.AppendTrade(trade, config.DataDir);
                 PersistenceService.SaveSnapshot(portfolio.Snapshot(), config.DataDir);
                 tradesThisCycle++;
@@ -281,12 +386,12 @@ while (!cts.Token.IsCancellationRequested)
                     idx, trade.Side, Truncate(market.Question, 50), trade.SizeUsd, trade.Price,
                     signal.Edge, signal.ExpectedValue);
 
-                if (console_) Console.WriteLine($" OK (EV=${signal.ExpectedValue:F2})");
+                Con($"  {idx} TRADE OK (EV=${signal.ExpectedValue:F2})");
             }
             else
             {
                 log.LogWarning("  {Idx} TRADE FAILED: order execution error", idx);
-                if (console_) Console.WriteLine(" FAILED");
+                Con($"  {idx} TRADE FAILED");
             }
         }
 
@@ -299,9 +404,9 @@ while (!cts.Token.IsCancellationRequested)
 
         if (console_)
         {
-            var pv = portfolio.Bankroll + portfolio.TotalExposure();
+            var pvSummary = portfolio.Bankroll + portfolio.TotalExposure();
             Console.WriteLine($"\n[{Ts()}] SUMMARY: {tradesThisCycle} trades this cycle");
-            Console.WriteLine($"  Portfolio: ${pv:F2} | Bankroll: ${portfolio.Bankroll:F2} | Exposure: ${portfolio.TotalExposure():F2}");
+            Console.WriteLine($"  Portfolio: ${pvSummary:F2} | Bankroll: ${portfolio.Bankroll:F2} | Exposure: ${portfolio.TotalExposure():F2}");
             Console.WriteLine($"  Positions: {portfolio.Positions.Count} | API cost: ${portfolio.TotalApiCost:F4} | PnL: ${portfolio.TotalRealizedPnl:+0.00;-0.00}");
         }
 
