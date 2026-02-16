@@ -16,6 +16,7 @@ Every 10 minutes:
      - Take-profit: sell if price reached 0.95+
      - Edge-gone: sell if market moved past our original fair estimate
      - Skip penny positions (price < $0.01, unsellable on CLOB)
+     - Top-up tiny positions (<5 tokens) that need exit: buy 5 more, then sell all
   3. Filter new markets by liquidity, volume, and time to resolution
   4. Estimate fair probability for each market (N independent Claude calls → trimmed mean)
   5. Find mispricing > 8% between estimate and market price
@@ -148,7 +149,7 @@ All parameters are set via environment variables. Both implementations use the s
 python/                        ← Python implementation
   main.py                        Orchestration loop
   config.py                      BotConfig dataclass (all env vars)
-  models.py                      Domain models (MarketInfo, Estimate, Signal, Position, Trade, ExitSignal)
+  models.py                      Domain models (MarketInfo, Estimate, Signal, Position, Trade, ExitSignal, TopupCandidate)
   market_scanner.py              Gamma API integration, market filtering, batch price fetch
   estimator.py                   Claude ensemble estimation (trimmed mean)
   portfolio.py                   Kelly sizing, risk management, position review, API cost tracking
@@ -160,7 +161,7 @@ python/                        ← Python implementation
 dotnet/PolymarketBot/          ← .NET 8 implementation
   Program.cs                     Orchestration loop (async)
   BotConfig.cs                   Config from env vars
-  Models/                        Domain models (including ExitSignal)
+  Models/                        Domain models (including ExitSignal, TopupCandidate)
   Services/
     MarketScanner.cs             Gamma API integration, market filtering, batch price fetch
     Estimator.cs                 Claude ensemble via Anthropic REST API
@@ -221,8 +222,9 @@ Each cycle, before scanning for new trades, the bot reviews all open positions:
 - **Take-profit** — sell if price reached 0.95+ (near certain resolution)
 - **Edge-gone** — sell if the market price moved past the original fair estimate (edge evaporated)
 - **Penny filter** — skip positions priced below $0.01 (can't create valid CLOB sell orders at sub-cent prices)
+- **Top-up-and-sell** — tiny positions (<5 tokens) that trigger an exit are rescued by buying 5 more tokens to reach the CLOB minimum, then selling all
 
-Sell orders use GTC (Good-Till-Cancelled) with a 6-second fill timeout. Positions below 5 tokens (CLOB minimum) are skipped.
+Sell orders use GTC (Good-Till-Cancelled) with a 6-second fill timeout. The top-up-and-sell algorithm handles positions that are too small to sell directly: it buys 5 tokens (CLOB minimum order size), then immediately sells the full position. If the buy fills but the sell doesn't, the position becomes sellable on the next cycle.
 
 ### Risk Management
 

@@ -74,7 +74,7 @@ No test suite or linter configured.
 python/
   main.py            – Orchestration loop: scan → estimate → signal → risk check → execute → save
   config.py          – BotConfig dataclass, all params from env vars
-  models.py          – Domain dataclasses: MarketInfo, Estimate, Signal, Position, Trade, ExitSignal, PortfolioSnapshot
+  models.py          – Domain dataclasses: MarketInfo, Estimate, Signal, Position, Trade, ExitSignal, TopupCandidate, PortfolioSnapshot
   market_scanner.py  – MarketScanner: Gamma API pagination, market parsing/filtering, CLOB price quotes, batch price fetch
   estimator.py       – Estimator: N independent Claude calls per market, trimmed mean, JSON parsing
   portfolio.py       – Portfolio: bankroll, positions, Kelly sizing, risk limits, position review & exit signals, API cost tracking
@@ -90,13 +90,13 @@ python/
 dotnet/PolymarketBot/
   Program.cs               – Async orchestration loop with CancellationToken
   BotConfig.cs             – Config from env vars (same vars as Python)
-  Models/                  – Enums, MarketInfo, Estimate, Signal, Position, Trade, PortfolioSnapshot
+  Models/                  – Enums, MarketInfo, Estimate, Signal, Position, Trade, TopupCandidate, PortfolioSnapshot
   Services/
     MarketScanner.cs       – Gamma API with HttpClient, pagination, filtering, batch price fetch
     Estimator.cs           – Claude ensemble via Anthropic REST API (HttpClient)
     Portfolio.cs           – Kelly sizing, 5-layer risk, position review & exit signals, API cost tracking
     ClobApiClient.cs       – CLOB API auth (EIP-712 signing, HMAC, API key derivation), buy & sell orders
-    ITrader.cs             – Trader interface (ExecuteAsync + ExecuteSellAsync)
+    ITrader.cs             – Trader interface (ExecuteAsync + ExecuteSellAsync + ExecuteTopupAndSellAsync)
     PaperTrader.cs         – Simulated execution (buy & sell)
     LiveTrader.cs          – Live CLOB API execution with GTC polling (buy & sell)
     PersistenceService.cs  – Atomic JSON save + JSONL trade log (System.Text.Json)
@@ -106,7 +106,7 @@ dotnet/PolymarketBot/
 **Data flow per cycle (both implementations):**
 
 1. **Balance sync** — fetch on-chain USDC, sync bankroll (downward allowed with positions open)
-2. **Position review** — fetch midpoint prices, check exit rules (stop-loss/take-profit/edge-gone), execute SELLs
+2. **Position review** — fetch midpoint prices, check exit rules (stop-loss/take-profit/edge-gone), execute SELLs, top-up-and-sell tiny positions
 3. `MarketScanner.Scan()` → list of `MarketInfo` (filtered by liquidity, volume, time-to-resolution)
 4. `Estimator.Estimate()` → `Estimate` per market (ensemble of N Claude calls, trimmed mean)
 5. `Portfolio.GenerateSignal()` → `Signal` when edge > `min_edge` (8% default)
@@ -134,6 +134,7 @@ dotnet/PolymarketBot/
 - **Polygon chain** (chain ID 137) for Polymarket settlement
 - **Live trading** uses GTC (Good-Till-Cancelled) limit orders with 6-second fill timeout, poll for MATCHED status, cancel if unfilled
 - **Position review** each cycle: stop-loss (>30% drop), take-profit (price≥0.95), edge-gone (market past fair estimate). Penny positions (<$0.01) skipped — unsellable on CLOB
+- **Top-up-and-sell** for tiny positions (<5 tokens) with exit signals: BUY 5 tokens (CLOB minimum) then SELL all. If BUY fills but SELL doesn't, position becomes sellable next cycle. Skipped if bankroll < topup cost
 - **SELL orders** use Side=1, makerAmount=tokens, takerAmount=USDC (reversed from BUY). Minimum 5 tokens enforced
 - **.NET version** uses direct HttpClient calls to Anthropic REST API (no SDK dependency)
 - **.NET CLOB auth** implements EIP-712 signing (ClobAuth struct for L1, Order struct for orders) + HMAC-SHA256 for L2, using Nethereum.Signer for Keccak/ECDSA
