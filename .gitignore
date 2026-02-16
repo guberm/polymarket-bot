@@ -41,3 +41,7 @@ Desktop.ini
 # Local instructions with credentials
 INSTRUCTIONS.md
 transcript.md
+
+# Launch scripts with credentials
+*.bat
+*.cmd
