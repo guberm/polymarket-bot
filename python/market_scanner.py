@@ -230,6 +230,45 @@ class MarketScanner:
                 return category
         return "other"
 
+    def check_market_resolution(self, condition_id: str) -> Optional[dict]:
+        """Check if a market has resolved via Gamma API.
+        Returns {"winning_side": "YES"|"NO"} if resolved, None if still active."""
+        try:
+            url = f"{self.base_url}/markets/{condition_id}"
+            resp = self.session.get(url, timeout=10)
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            data = resp.json()
+
+            if not data.get("closed", False):
+                return None
+
+            # Parse outcome prices to determine winner
+            prices_raw = data.get("outcomePrices", "[]")
+            if isinstance(prices_raw, str):
+                prices = json.loads(prices_raw)
+            else:
+                prices = prices_raw
+
+            if len(prices) != 2:
+                return None
+
+            yes_price = float(prices[0])
+            no_price = float(prices[1])
+
+            # After resolution: winning side ≈ 1.0, losing ≈ 0.0
+            if yes_price >= 0.99:
+                return {"winning_side": "YES"}
+            elif no_price >= 0.99:
+                return {"winning_side": "NO"}
+
+            # Market closed but not yet fully resolved (ambiguous)
+            return None
+        except Exception as e:
+            log.debug(f"Resolution check failed for {condition_id[:20]}...: {e}")
+            return None
+
     def get_market_prices(self, token_ids: list[str]) -> dict[str, float]:
         """Fetch current prices for multiple tokens. Returns dict of token_id -> midpoint price."""
         prices = {}

@@ -191,6 +191,25 @@ class Portfolio:
         log.info(f"Closed {pos.question[:40]}... PnL: ${pnl:+.2f}")
         return pnl
 
+    def resolve_position(self, condition_id: str, won: bool) -> float:
+        """Close a resolved market position. Won: payout = shares * $1.00. Lost: payout = $0.
+        Returns realized PnL."""
+        pos = next((p for p in self.positions if p.condition_id == condition_id), None)
+        if pos is None:
+            return 0.0
+
+        payout = pos.shares if won else 0.0
+        pnl = payout - pos.size_usd
+        self.bankroll += payout
+        self.total_realized_pnl += pnl
+        self.total_trades += 1
+        self.positions = [p for p in self.positions if p.condition_id != condition_id]
+        self.high_water_mark = max(self.high_water_mark, self.bankroll)
+
+        result = "WON" if won else "LOST"
+        log.info(f"Resolved ({result}): {pos.question[:40]}... payout=${payout:.2f}, PnL=${pnl:+.2f}")
+        return pnl
+
     # ── Position review ─────────────────────────────────────────────
 
     def update_position_prices(self, prices: dict[str, float]) -> None:

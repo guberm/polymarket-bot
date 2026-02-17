@@ -236,6 +236,53 @@ while (!cts.Token.IsCancellationRequested)
         var prices = await scanner.GetMarketPricesAsync(tokenIds, cts.Token);
         portfolio.UpdatePositionPrices(prices);
 
+        // Tier 0: check for resolved markets (tokens with no CLOB price)
+        var unpriced = portfolio.Positions.Where(p => !prices.ContainsKey(p.TokenId)).ToList();
+        var resolvedCount = 0;
+        foreach (var pos in unpriced)
+        {
+            var resolution = await scanner.CheckMarketResolutionAsync(pos.ConditionId, cts.Token);
+            if (resolution is null) continue;
+
+            var won = pos.Side.ToString() == resolution["winning_side"];
+            var pnl = portfolio.ResolvePosition(pos.ConditionId, won);
+            var result = won ? "WON" : "LOST";
+            var payoutAmt = won ? pos.Shares : 0.0;
+            resolvedCount++;
+
+            log.LogInformation("  RESOLVED ({Result}): {Question} payout=${Payout:F2}, PnL=${Pnl:+0.00;-0.00}",
+                result, Truncate(pos.Question, 50), payoutAmt, pnl);
+            if (console_)
+            {
+                var color = won ? GREEN : RED;
+                Con($"  {color}RESOLVED ({result}): {Truncate(pos.Question, 50)}... PnL=${pnl:+0.00;-0.00}{RESET}");
+            }
+
+            var resolveTrade = new PolymarketBot.Models.Trade
+            {
+                TradeId = Guid.NewGuid().ToString(),
+                ConditionId = pos.ConditionId,
+                Question = pos.Question,
+                Side = pos.Side,
+                Action = PolymarketBot.Models.TradeAction.SELL,
+                Price = won ? 1.0 : 0.0,
+                SizeUsd = pos.SizeUsd,
+                Shares = pos.Shares,
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0,
+                IsPaper = !config.LiveTrading,
+                Rationale = $"Market resolved: {result}",
+                ExitReason = $"resolved_{result.ToLowerInvariant()}",
+            };
+            PersistenceService.AppendTrade(resolveTrade, config.DataDir);
+            PersistenceService.SaveSnapshot(portfolio.Snapshot(), config.DataDir);
+        }
+
+        if (resolvedCount > 0)
+        {
+            log.LogInformation("  {Count} market(s) resolved", resolvedCount);
+            Con($"  {resolvedCount} market(s) resolved, bankroll now ${portfolio.Bankroll:F2}");
+        }
+
         var pennyCount = portfolio.Positions.Count(p => p.CurrentPrice < 0.01);
         var tinyCount = portfolio.Positions.Count(p => p.CurrentPrice >= 0.01 && p.Shares < 5.0);
         var exitSignals = portfolio.GenerateExitSignals();

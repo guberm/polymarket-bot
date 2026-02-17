@@ -235,6 +235,25 @@ public sealed class Portfolio
         return pnl;
     }
 
+    public double ResolvePosition(string conditionId, bool won)
+    {
+        var pos = Positions.FirstOrDefault(p => p.ConditionId == conditionId);
+        if (pos is null) return 0.0;
+
+        var payout = won ? pos.Shares : 0.0;
+        var pnl = payout - pos.SizeUsd;
+        Bankroll += payout;
+        TotalRealizedPnl += pnl;
+        TotalTrades++;
+        Positions = Positions.Where(p => p.ConditionId != conditionId).ToList();
+        HighWaterMark = Math.Max(HighWaterMark, Bankroll);
+
+        var result = won ? "WON" : "LOST";
+        _log.LogInformation("Resolved ({Result}): {Question} payout=${Payout:F2}, PnL=${Pnl:+0.00;-0.00}",
+            result, Truncate(pos.Question, 40), payout, pnl);
+        return pnl;
+    }
+
     // -- Position review --
 
     public void UpdatePositionPrices(Dictionary<string, double> prices)

@@ -249,6 +249,44 @@ public sealed class MarketScanner
         return "other";
     }
 
+    public async Task<Dictionary<string, string>?> CheckMarketResolutionAsync(
+        string conditionId, CancellationToken ct = default)
+    {
+        try
+        {
+            var url = $"{_baseUrl}/markets/{conditionId}";
+            var resp = await _http.GetAsync(url, ct);
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+                return null;
+            resp.EnsureSuccessStatusCode();
+            var json = await resp.Content.ReadAsStringAsync(ct);
+            var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (!root.GetPropertyOrDefault("closed", false))
+                return null;
+
+            var prices = ParseJsonStringOrArray(root, "outcomePrices");
+            if (prices.Count != 2) return null;
+
+            var yesPrice = double.Parse(prices[0]);
+            var noPrice = double.Parse(prices[1]);
+
+            if (yesPrice >= 0.99)
+                return new Dictionary<string, string> { ["winning_side"] = "YES" };
+            if (noPrice >= 0.99)
+                return new Dictionary<string, string> { ["winning_side"] = "NO" };
+
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogDebug("Resolution check failed for {ConditionId}: {Error}",
+                conditionId[..Math.Min(conditionId.Length, 20)], ex.Message);
+            return null;
+        }
+    }
+
     public async Task<Dictionary<string, double>> GetMarketPricesAsync(
         IEnumerable<string> tokenIds, CancellationToken ct = default)
     {

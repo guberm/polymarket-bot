@@ -14,10 +14,13 @@ import sys
 import time
 from datetime import datetime, timezone
 
+from uuid import uuid4
+
 from config import BotConfig
 from logger_setup import setup_logging
 from market_scanner import MarketScanner
 from estimator import Estimator
+from models import Trade, TradeAction
 from portfolio import Portfolio
 from trader import PaperTrader, LiveTrader
 from persistence import load_snapshot, save_snapshot, append_trade
@@ -185,6 +188,47 @@ def main():
             token_ids = [p.token_id for p in portfolio.positions]
             prices = scanner.get_market_prices(token_ids)
             portfolio.update_position_prices(prices)
+
+            # Tier 0: check for resolved markets (tokens with no CLOB price)
+            unpriced = [p for p in portfolio.positions if p.token_id not in prices]
+            resolved_count = 0
+            for pos in unpriced:
+                resolution = scanner.check_market_resolution(pos.condition_id)
+                if resolution is None:
+                    continue
+                won = (pos.side.value == resolution["winning_side"])
+                pnl = portfolio.resolve_position(pos.condition_id, won)
+                result = "WON" if won else "LOST"
+                resolved_count += 1
+                color = GREEN if won else RED
+                log.info(
+                    f"  RESOLVED ({result}): {pos.question[:50]}... "
+                    f"payout={'$%.2f' % (pos.shares if won else 0)}, PnL=${pnl:+.2f}"
+                )
+                if con:
+                    print(f"[{ts()}]   {color}RESOLVED ({result}): {pos.question[:50]}... PnL=${pnl:+.2f}{RESET}")
+
+                trade = Trade(
+                    trade_id=str(uuid4()),
+                    condition_id=pos.condition_id,
+                    question=pos.question,
+                    side=pos.side,
+                    action=TradeAction.SELL,
+                    price=1.0 if won else 0.0,
+                    size_usd=pos.size_usd,
+                    shares=pos.shares,
+                    timestamp=time.time(),
+                    is_paper=not config.live_trading,
+                    rationale=f"Market resolved: {result}",
+                    exit_reason=f"resolved_{result.lower()}",
+                )
+                append_trade(trade, config.data_dir)
+                save_snapshot(portfolio.snapshot(), config.data_dir)
+
+            if resolved_count > 0:
+                log.info(f"  {resolved_count} market(s) resolved")
+                if con:
+                    print(f"[{ts()}]   {resolved_count} market(s) resolved, bankroll now ${portfolio.bankroll:.2f}")
 
             # Tier 1: free rule-based exit checks
             penny_count = sum(1 for p in portfolio.positions if p.current_price < 0.01)
