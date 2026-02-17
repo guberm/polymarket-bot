@@ -189,10 +189,15 @@ def main():
             prices = scanner.get_market_prices(token_ids)
             portfolio.update_position_prices(prices)
 
-            # Tier 0: check for resolved markets (tokens with no CLOB price)
-            unpriced = [p for p in portfolio.positions if p.token_id not in prices]
+            # Tier 0: check for resolved markets
+            # Include both unpriced tokens AND penny positions (CLOB often returns
+            # residual sub-cent prices for resolved markets)
+            maybe_resolved = [
+                p for p in portfolio.positions
+                if p.token_id not in prices or prices.get(p.token_id, 0) < 0.01
+            ]
             resolved_count = 0
-            for pos in unpriced:
+            for pos in maybe_resolved:
                 resolution = scanner.check_market_resolution(pos.condition_id)
                 if resolution is None:
                     continue

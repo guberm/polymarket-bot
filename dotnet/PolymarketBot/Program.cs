@@ -236,10 +236,15 @@ while (!cts.Token.IsCancellationRequested)
         var prices = await scanner.GetMarketPricesAsync(tokenIds, cts.Token);
         portfolio.UpdatePositionPrices(prices);
 
-        // Tier 0: check for resolved markets (tokens with no CLOB price)
-        var unpriced = portfolio.Positions.Where(p => !prices.ContainsKey(p.TokenId)).ToList();
+        // Tier 0: check for resolved markets
+        // Include both unpriced tokens AND penny positions (CLOB often returns
+        // residual sub-cent prices for resolved markets)
+        var maybeResolved = portfolio.Positions
+            .Where(p => !prices.ContainsKey(p.TokenId) ||
+                        (prices.TryGetValue(p.TokenId, out var pr) && pr < 0.01))
+            .ToList();
         var resolvedCount = 0;
-        foreach (var pos in unpriced)
+        foreach (var pos in maybeResolved)
         {
             var resolution = await scanner.CheckMarketResolutionAsync(pos.ConditionId, cts.Token);
             if (resolution is null) continue;
