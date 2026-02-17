@@ -231,10 +231,10 @@ class MarketScanner:
         return "other"
 
     def check_market_resolution(self, condition_id: str) -> Optional[dict]:
-        """Check if a market has resolved via Gamma API.
+        """Check if a market has resolved via CLOB API.
         Returns {"winning_side": "YES"|"NO"} if resolved, None if still active."""
         try:
-            url = f"{self.base_url}/markets/{condition_id}"
+            url = f"{self.config.clob_host}/markets/{condition_id}"
             resp = self.session.get(url, timeout=10)
             if resp.status_code == 404:
                 return None
@@ -244,26 +244,17 @@ class MarketScanner:
             if not data.get("closed", False):
                 return None
 
-            # Parse outcome prices to determine winner
-            prices_raw = data.get("outcomePrices", "[]")
-            if isinstance(prices_raw, str):
-                prices = json.loads(prices_raw)
-            else:
-                prices = prices_raw
+            # CLOB returns tokens array with winner flag
+            tokens = data.get("tokens", [])
+            for token in tokens:
+                if token.get("winner", False):
+                    outcome = token.get("outcome", "").upper()
+                    if outcome == "YES":
+                        return {"winning_side": "YES"}
+                    elif outcome == "NO":
+                        return {"winning_side": "NO"}
 
-            if len(prices) != 2:
-                return None
-
-            yes_price = float(prices[0])
-            no_price = float(prices[1])
-
-            # After resolution: winning side ≈ 1.0, losing ≈ 0.0
-            if yes_price >= 0.99:
-                return {"winning_side": "YES"}
-            elif no_price >= 0.99:
-                return {"winning_side": "NO"}
-
-            # Market closed but not yet fully resolved (ambiguous)
+            # Market closed but no winner flagged yet
             return None
         except Exception as e:
             log.debug(f"Resolution check failed for {condition_id[:20]}...: {e}")

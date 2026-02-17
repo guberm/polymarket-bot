@@ -254,7 +254,7 @@ public sealed class MarketScanner
     {
         try
         {
-            var url = $"{_baseUrl}/markets/{conditionId}";
+            var url = $"{_clobHost}/markets/{conditionId}";
             var resp = await _http.GetAsync(url, ct);
             if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
                 return null;
@@ -266,16 +266,21 @@ public sealed class MarketScanner
             if (!root.GetPropertyOrDefault("closed", false))
                 return null;
 
-            var prices = ParseJsonStringOrArray(root, "outcomePrices");
-            if (prices.Count != 2) return null;
-
-            var yesPrice = double.Parse(prices[0]);
-            var noPrice = double.Parse(prices[1]);
-
-            if (yesPrice >= 0.99)
-                return new Dictionary<string, string> { ["winning_side"] = "YES" };
-            if (noPrice >= 0.99)
-                return new Dictionary<string, string> { ["winning_side"] = "NO" };
+            // CLOB returns tokens array with winner flag
+            if (root.TryGetProperty("tokens", out var tokensEl) && tokensEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var token in tokensEl.EnumerateArray())
+                {
+                    if (token.GetPropertyOrDefault("winner", false))
+                    {
+                        var outcome = token.GetPropertyOrDefault("outcome", "").ToUpperInvariant();
+                        if (outcome == "YES")
+                            return new Dictionary<string, string> { ["winning_side"] = "YES" };
+                        if (outcome == "NO")
+                            return new Dictionary<string, string> { ["winning_side"] = "NO" };
+                    }
+                }
+            }
 
             return null;
         }
