@@ -6,27 +6,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Polymarket trading bot that uses Claude ensemble estimation to find and trade mispriced binary prediction markets. Every cycle it scans markets, estimates fair probabilities via multiple Claude calls (trimmed mean), finds mispricing > 8%, sizes positions with fractional Kelly criterion, and executes. The agent pays for its own API inference from its bankroll — if bankroll hits $0, it stops.
 
-Two implementations: **Python** (`python/`) and **.NET 8** (`dotnet/PolymarketBot/`). Both share the same logic, config env vars, and data formats.
+Two implementations: **Python** (`python/`) and **.NET 8** (`dotnet/PolymarketBot/`). Both share the same logic, config, and data formats.
 
 ## Running
+
+### Config file (primary)
+
+All settings live in **`polymarket_bot_config.json`** at the project root (not tracked by git — contains secrets). Copy from the example or create manually:
+
+```json
+{
+  "anthropic_api_key": "sk-ant-...",
+  "anthropic_api_host": "https://api.anthropic.com",
+  "gamma_api_host": "https://gamma-api.polymarket.com",
+  "clob_host": "https://clob.polymarket.com",
+  "live_trading": false,
+  "initial_bankroll": 10000
+}
+```
+
+Config priority (highest wins): **CLI arg → env var → polymarket_bot_config.json → code default**
 
 ### Python
 
 ```bash
 cd python
 pip install -r requirements.txt
-
-# Paper trading (default)
-ANTHROPIC_API_KEY=sk-... python main.py
-
-# Verbose mode
-ANTHROPIC_API_KEY=sk-... python main.py --verbose
-
-# Live trading (requires funded Polymarket wallet)
-ANTHROPIC_API_KEY=sk-... POLYMARKET_PRIVATE_KEY=0x... POLYMARKET_FUNDER_ADDRESS=0x... POLYMARKET_SIGNATURE_TYPE=1 LIVE_TRADING=true python main.py
-
-# CLI risk overrides
-python main.py --max-position-pct 0.15 --max-total-exposure-pct 0.90 --daily-stop-loss-pct 0.20
+python main.py           # paper trading
+python main.py --verbose # debug logging
+python main.py --console # human-readable console output
 ```
 
 Python 3.10+ required. Dependencies: `requests`, `anthropic`, `py-clob-client` (live trading only).
@@ -35,34 +43,25 @@ Python 3.10+ required. Dependencies: `requests`, `anthropic`, `py-clob-client` (
 
 ```bash
 cd dotnet/PolymarketBot
-
-# Paper trading (default)
-ANTHROPIC_API_KEY=sk-... dotnet run
-
-# Verbose mode
-ANTHROPIC_API_KEY=sk-... dotnet run -- --verbose
-
-# Live trading
-ANTHROPIC_API_KEY=sk-... POLYMARKET_PRIVATE_KEY=0x... POLYMARKET_FUNDER_ADDRESS=0x... POLYMARKET_SIGNATURE_TYPE=1 LIVE_TRADING=true dotnet run
-
-# CLI risk overrides
-dotnet run -- --max-position-pct 0.15 --max-total-exposure-pct 0.90 --daily-stop-loss-pct 0.20
+dotnet run               # paper trading
+dotnet run -- --verbose  # debug logging
+dotnet run -- --console  # human-readable console output
 ```
 
 .NET 8 required. NuGet packages: `Microsoft.Extensions.Logging`, `Nethereum.Signer` (EIP-712/ECDSA for live trading).
 
-**All config via env vars** — see `BotConfig.from_env()` in `python/config.py` or `BotConfig.FromEnv()` in `dotnet/PolymarketBot/BotConfig.cs`. Key ones:
-- `ANTHROPIC_API_KEY` (required)
-- `POLYMARKET_PRIVATE_KEY`, `POLYMARKET_FUNDER_ADDRESS` (live trading)
-- `POLYMARKET_SIGNATURE_TYPE` (0=EOA, 1=GNOSIS_SAFE; default: 0)
-- `LIVE_TRADING=true` (default: false/paper)
-- `INITIAL_BANKROLL` (default: 10000)
-- `MIN_EDGE` (default: 0.08 = 8%)
-- `SCAN_INTERVAL_MINUTES` (default: 10)
-- `ENABLE_POSITION_REVIEW` (default: true) — review & exit positions each cycle
-- `POSITION_STOP_LOSS_PCT` (default: 0.30), `TAKE_PROFIT_PRICE` (default: 0.95), `EXIT_EDGE_BUFFER` (default: 0.05)
-- `ANTHROPIC_API_HOST`, `GAMMA_API_HOST`, `CLOB_HOST` (API base URLs, required)
-- `EXCHANGE_ADDRESS`, `NEG_RISK_EXCHANGE_ADDRESS` (contract addresses, required for live trading)
+### Windows
+
+Double-click `run-bot.bat` — reads `polymarket_bot_config.json` automatically.
+
+### CLI risk overrides
+
+```bash
+python main.py --max-position-pct 0.15 --max-total-exposure-pct 0.90 --daily-stop-loss-pct 0.20
+dotnet run -- --max-position-pct 0.15 --max-total-exposure-pct 0.90 --daily-stop-loss-pct 0.20
+```
+
+Available: `--max-position-pct`, `--max-total-exposure-pct`, `--max-category-exposure-pct`, `--daily-stop-loss-pct`, `--max-drawdown-pct`, `--max-concurrent-positions`, `--verbose`, `--console`.
 
 No test suite or linter configured.
 
@@ -70,10 +69,11 @@ No test suite or linter configured.
 
 ### Python (`python/`)
 
-```
+```text
 python/
   main.py            – Orchestration loop: scan → estimate → signal → risk check → execute → save
-  config.py          – BotConfig dataclass, all params from env vars
+  config.py          – BotConfig dataclass; reads polymarket_bot_config.json then env vars
+  notifier.py        – Email notifications (smtplib); all events: trade, sell, resolved, halted, etc.
   models.py          – Domain dataclasses: MarketInfo, Estimate, Signal, Position, Trade, ExitSignal, TopupCandidate, PortfolioSnapshot
   market_scanner.py  – MarketScanner: Gamma API pagination, market parsing/filtering, CLOB price quotes, batch price fetch
   estimator.py       – Estimator: N independent Claude calls per market, trimmed mean, JSON parsing
@@ -86,15 +86,16 @@ python/
 
 ### .NET (`dotnet/PolymarketBot/`)
 
-```
+```text
 dotnet/PolymarketBot/
   Program.cs               – Async orchestration loop with CancellationToken
-  BotConfig.cs             – Config from env vars (same vars as Python)
+  BotConfig.cs             – Config from polymarket_bot_config.json then env vars (same keys as Python)
   Models/                  – Enums, MarketInfo, Estimate, Signal, Position, Trade, TopupCandidate, PortfolioSnapshot
   Services/
     MarketScanner.cs       – Gamma API with HttpClient, pagination, filtering, batch price fetch
     Estimator.cs           – Claude ensemble via Anthropic REST API (HttpClient)
     Portfolio.cs           – Kelly sizing, 5-layer risk, position review & exit signals, API cost tracking
+    Notifier.cs            – Email notifications (System.Net.Mail); mirrors python/notifier.py
     ClobApiClient.cs       – CLOB API auth (EIP-712 signing, HMAC, API key derivation), buy & sell orders
     ITrader.cs             – Trader interface (ExecuteAsync + ExecuteSellAsync + ExecuteTopupAndSellAsync)
     PaperTrader.cs         – Simulated execution (buy & sell)
@@ -128,7 +129,9 @@ dotnet/PolymarketBot/
 - **Gamma API returns JSON-encoded strings** inside JSON for `outcomes`, `outcomePrices`, and `clobTokenIds` — parsing handles both string and list forms
 - **Risk is layered:** per-position (15%), per-category (50%), total exposure (90%), daily stop-loss (20%), max drawdown (50%)
 - **Portfolio value** for stop-loss/drawdown = bankroll + total open position value (deployed capital isn't a loss)
-- **CLI args** override env vars for risk params: `--max-position-pct`, `--max-total-exposure-pct`, `--max-category-exposure-pct`, `--daily-stop-loss-pct`, `--max-drawdown-pct`, `--max-concurrent-positions`
+- **Config file** `polymarket_bot_config.json` at project root (not tracked by git). Loaded by both Python (`Path(__file__).parent.parent / "polymarket_bot_config.json"`) and .NET (`../../polymarket_bot_config.json` relative to CWD). `CONFIG_FILE` env var overrides path. Priority: CLI arg → env var → config file → code default
+- **Email notifications** — `Notifier` class (python/notifier.py, dotnet/.../Notifier.cs) sends emails on: started, trade, sell, topup+sell, resolved, halted, daily_reset, error, stopped. Errors silently swallowed — email failure never crashes bot. Use STARTTLS (port 587) or SMTP_SSL (port 465) based on `email_use_tls`
+- **CLI args** override env vars/config for risk params: `--max-position-pct`, `--max-total-exposure-pct`, `--max-category-exposure-pct`, `--daily-stop-loss-pct`, `--max-drawdown-pct`, `--max-concurrent-positions`
 - **Agent pays for inference** — API token costs are deducted from bankroll each cycle
 - **Atomic persistence** — portfolio.json written via tmp+rename to avoid corruption on crash
 - **Polygon chain** (chain ID 137) for Polymarket settlement

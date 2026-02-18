@@ -23,6 +23,9 @@ obj/
 *.key
 *.pem
 
+# Bot config file (contains API keys and private keys)
+polymarket_bot_config.json
+
 # IDE
 .vscode/
 .idea/
@@ -43,5 +46,5 @@ INSTRUCTIONS.md
 transcript.md
 
 # Launch scripts with credentials
-*.bat
-*.cmd
+# *.bat
+# *.cmd

@@ -151,6 +151,7 @@ httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
 
 var scanner = new MarketScanner(config, httpClient, loggerFactory.CreateLogger<MarketScanner>());
 var estimator = new Estimator(config, httpClient, loggerFactory.CreateLogger<Estimator>());
+var notifier = new Notifier(config, loggerFactory.CreateLogger<Notifier>());
 
 // ── Graceful shutdown ───────────────────────────────────────────
 
@@ -183,6 +184,9 @@ else
 {
     trader = new PaperTrader();
 }
+
+notifier.NotifyStarted(mode, portfolio.Bankroll, portfolio.Positions.Count);
+
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
@@ -204,6 +208,7 @@ while (!cts.Token.IsCancellationRequested)
     {
         log.LogWarning("Portfolio halted — stopping");
         Con($"{RED}HALTED: portfolio risk limit reached, stopping bot{RESET}");
+        notifier.NotifyHalted("Risk limit reached", portfolio);
         break;
     }
 
@@ -215,6 +220,7 @@ while (!cts.Token.IsCancellationRequested)
         lastDailyReset = today;
         log.LogInformation("New day — daily start value reset to ${Bankroll:F2}", portfolio.Bankroll);
         Con($"NEW DAY: daily PnL reset, start=${portfolio.Bankroll:F2}");
+        notifier.NotifyDailyReset(portfolio);
     }
 
     log.LogInformation("--- Cycle {Cycle} ---", cycle);
@@ -298,6 +304,7 @@ while (!cts.Token.IsCancellationRequested)
             };
             PersistenceService.AppendTrade(resolveTrade, config.DataDir);
             PersistenceService.SaveSnapshot(portfolio.Snapshot(), config.DataDir);
+            notifier.NotifyResolved(pos, won, pnl, portfolio);
         }
 
         if (resolvedCount > 0)
@@ -354,6 +361,7 @@ while (!cts.Token.IsCancellationRequested)
                 PersistenceService.AppendTrade(sellTrade, config.DataDir);
                 PersistenceService.SaveSnapshot(portfolio.Snapshot(), config.DataDir);
                 exitsThisCycle++;
+                notifier.NotifySell(sellTrade, es.ExitReason, es.PnlPct, portfolio);
                 Con($"    {GREEN}SOLD OK{RESET}");
             }
             else
@@ -400,6 +408,7 @@ while (!cts.Token.IsCancellationRequested)
                 PersistenceService.AppendTrade(topupTrade, config.DataDir);
                 PersistenceService.SaveSnapshot(portfolio.Snapshot(), config.DataDir);
                 exitsThisCycle++;
+                notifier.NotifyTopupSell(topupTrade, tc, portfolio);
                 Con($"    {GREEN}TOPUP+SELL OK (freed ${tc.RecoveryValue:F2}){RESET}");
             }
             else
@@ -505,6 +514,7 @@ while (!cts.Token.IsCancellationRequested)
                 log.LogWarning("Portfolio value < $1 — agent is dead");
                 Con($"{RED}DEAD: portfolio value depleted{RESET}");
                 portfolio.IsHalted = true;
+                notifier.NotifyHalted("Portfolio value < $1 — agent is dead", portfolio);
                 break;
             }
 
@@ -560,6 +570,7 @@ while (!cts.Token.IsCancellationRequested)
                 PersistenceService.AppendTrade(trade, config.DataDir);
                 PersistenceService.SaveSnapshot(portfolio.Snapshot(), config.DataDir);
                 tradesThisCycle++;
+                notifier.NotifyTrade(trade, signal, portfolio);
 
                 log.LogInformation(
                     "  {Idx} TRADE OK: {Side} {Question} ${Size:F2} @ {Price:F3} (edge={Edge:P1}, EV=${EV:F2})",
@@ -602,6 +613,7 @@ while (!cts.Token.IsCancellationRequested)
     {
         log.LogError(ex, "Cycle {Cycle} error", cycle);
         Con($"{RED}ERROR: {ex.Message}{RESET}");
+        notifier.NotifyError(cycle, ex);
     }
 
     // Sleep in 1-second ticks for responsive shutdown
@@ -620,6 +632,7 @@ while (!cts.Token.IsCancellationRequested)
 // ── Final save ──────────────────────────────────────────────────
 
 PersistenceService.SaveSnapshot(portfolio.Snapshot(), config.DataDir);
+notifier.NotifyStopped(portfolio);
 log.LogInformation(
     "Bot stopped | Final bankroll: ${Bankroll:F2} | Total trades: {Trades} | " +
     "Total API cost: ${ApiCost:F4} | Realized PnL: ${PnL:+0.00;-0.00}",

@@ -1,7 +1,31 @@
-"""Bot configuration loaded from environment variables with sensible defaults."""
+"""Bot configuration.
 
+Priority (highest wins):
+  1. Environment variables
+  2. config.json  (project root, or path in CONFIG_FILE env var)
+  3. Code defaults
+
+config.json location: project root (polymarket_bot/config.json)
+"""
+
+import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+
+def _load_json() -> dict:
+    """Load config.json. Returns empty dict if not found."""
+    path = os.environ.get("CONFIG_FILE") or str(Path(__file__).parent.parent / "polymarket_bot_config.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        import logging
+        logging.getLogger("bot.config").warning(f"Could not load config.json: {e}")
+        return {}
 
 
 @dataclass
@@ -59,58 +83,93 @@ class BotConfig:
     polymarket_api_secret: str = ""
     polymarket_api_passphrase: str = ""
 
-    # Endpoints / contracts (required — set via env vars)
+    # Endpoints / contracts (required — set via config.json or env vars)
     anthropic_api_host: str = ""
     gamma_api_host: str = ""
     clob_host: str = ""
     exchange_address: str = ""
     neg_risk_exchange_address: str = ""
 
+    # Email notifications
+    email_enabled: bool = False
+    email_smtp_host: str = ""
+    email_smtp_port: int = 587
+    email_use_tls: bool = True
+    email_user: str = ""
+    email_password: str = ""
+    email_to: str = ""
+
     # Persistence (shared between Python and .NET)
     data_dir: str = "../data"
 
     @classmethod
     def from_env(cls) -> "BotConfig":
-        """Build config from environment variables."""
+        """Build config: env var > config.json > code default."""
+        j = _load_json()
+
+        def get(key: str, default):
+            """Return env var (if set) → JSON value → code default."""
+            env_val = os.environ.get(key.upper())
+            if env_val is not None:
+                # Coerce env string to the type of the default
+                if isinstance(default, bool):
+                    return env_val.lower() == "true"
+                if isinstance(default, int):
+                    return int(env_val)
+                if isinstance(default, float):
+                    return float(env_val)
+                return env_val
+            # JSON value is already typed
+            if key in j:
+                return j[key]
+            return default
+
         return cls(
-            live_trading=os.getenv("LIVE_TRADING", "false").lower() == "true",
-            scan_interval_minutes=int(os.getenv("SCAN_INTERVAL_MINUTES", "10")),
-            min_liquidity=float(os.getenv("MIN_LIQUIDITY", "5000")),
-            min_volume_24hr=float(os.getenv("MIN_VOLUME_24HR", "1000")),
-            min_time_to_resolution_hours=float(os.getenv("MIN_TIME_TO_RESOLUTION_HOURS", "24")),
-            min_market_price=float(os.getenv("MIN_MARKET_PRICE", "0.10")),
-            markets_per_cycle=int(os.getenv("MARKETS_PER_CYCLE", "30")),
-            claude_model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514"),
-            ensemble_size=int(os.getenv("ENSEMBLE_SIZE", "5")),
-            ensemble_temperature=float(os.getenv("ENSEMBLE_TEMPERATURE", "0.7")),
-            kelly_fraction=float(os.getenv("KELLY_FRACTION", "0.25")),
-            min_edge=float(os.getenv("MIN_EDGE", "0.08")),
-            max_position_pct=float(os.getenv("MAX_POSITION_PCT", "0.15")),
-            max_total_exposure_pct=float(os.getenv("MAX_TOTAL_EXPOSURE_PCT", "1.00")),
-            max_category_exposure_pct=float(os.getenv("MAX_CATEGORY_EXPOSURE_PCT", "0.80")),
-            daily_stop_loss_pct=float(os.getenv("DAILY_STOP_LOSS_PCT", "0.20")),
-            max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT", "0.50")),
-            max_concurrent_positions=int(os.getenv("MAX_CONCURRENT_POSITIONS", "20")),
-            initial_bankroll=float(os.getenv("INITIAL_BANKROLL", "10000")),
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-            polymarket_private_key=os.getenv("POLYMARKET_PRIVATE_KEY", ""),
-            polymarket_funder_address=os.getenv("POLYMARKET_FUNDER_ADDRESS", ""),
-            polymarket_chain_id=int(os.getenv("POLYMARKET_CHAIN_ID", "137")),
-            polymarket_signature_type=int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "0")),
-            polymarket_api_key=os.getenv("POLYMARKET_API_KEY", ""),
-            polymarket_api_secret=os.getenv("POLYMARKET_API_SECRET", ""),
-            polymarket_api_passphrase=os.getenv("POLYMARKET_API_PASSPHRASE", ""),
-            min_trade_usd=float(os.getenv("MIN_TRADE_USD", "1.0")),
-            enable_position_review=os.getenv("ENABLE_POSITION_REVIEW", "true").lower() == "true",
-            position_stop_loss_pct=float(os.getenv("POSITION_STOP_LOSS_PCT", "0.30")),
-            take_profit_price=float(os.getenv("TAKE_PROFIT_PRICE", "0.95")),
-            exit_edge_buffer=float(os.getenv("EXIT_EDGE_BUFFER", "0.05")),
-            review_reestimate_threshold_pct=float(os.getenv("REVIEW_REESTIMATE_THRESHOLD_PCT", "0.10")),
-            review_ensemble_size=int(os.getenv("REVIEW_ENSEMBLE_SIZE", "3")),
-            anthropic_api_host=os.getenv("ANTHROPIC_API_HOST", ""),
-            gamma_api_host=os.getenv("GAMMA_API_HOST", ""),
-            clob_host=os.getenv("CLOB_HOST", ""),
-            exchange_address=os.getenv("EXCHANGE_ADDRESS", ""),
-            neg_risk_exchange_address=os.getenv("NEG_RISK_EXCHANGE_ADDRESS", ""),
-            data_dir=os.getenv("DATA_DIR", "../data"),
+            live_trading=get("live_trading", False),
+            scan_interval_minutes=get("scan_interval_minutes", 10),
+            min_liquidity=get("min_liquidity", 5000.0),
+            min_volume_24hr=get("min_volume_24hr", 1000.0),
+            min_time_to_resolution_hours=get("min_time_to_resolution_hours", 24.0),
+            min_market_price=get("min_market_price", 0.10),
+            markets_per_cycle=get("markets_per_cycle", 30),
+            claude_model=get("claude_model", "claude-sonnet-4-20250514"),
+            ensemble_size=get("ensemble_size", 5),
+            ensemble_temperature=get("ensemble_temperature", 0.7),
+            kelly_fraction=get("kelly_fraction", 0.25),
+            min_edge=get("min_edge", 0.08),
+            min_trade_usd=get("min_trade_usd", 1.0),
+            enable_position_review=get("enable_position_review", True),
+            position_stop_loss_pct=get("position_stop_loss_pct", 0.30),
+            take_profit_price=get("take_profit_price", 0.95),
+            exit_edge_buffer=get("exit_edge_buffer", 0.05),
+            review_reestimate_threshold_pct=get("review_reestimate_threshold_pct", 0.10),
+            review_ensemble_size=get("review_ensemble_size", 3),
+            max_position_pct=get("max_position_pct", 0.15),
+            max_total_exposure_pct=get("max_total_exposure_pct", 1.00),
+            max_category_exposure_pct=get("max_category_exposure_pct", 0.80),
+            daily_stop_loss_pct=get("daily_stop_loss_pct", 0.20),
+            max_drawdown_pct=get("max_drawdown_pct", 0.50),
+            max_concurrent_positions=get("max_concurrent_positions", 20),
+            initial_bankroll=get("initial_bankroll", 10000.0),
+            anthropic_api_key=get("anthropic_api_key", ""),
+            polymarket_private_key=get("polymarket_private_key", ""),
+            polymarket_funder_address=get("polymarket_funder_address", ""),
+            polymarket_chain_id=get("polymarket_chain_id", 137),
+            polymarket_signature_type=get("polymarket_signature_type", 0),
+            polymarket_api_key=get("polymarket_api_key", ""),
+            polymarket_api_secret=get("polymarket_api_secret", ""),
+            polymarket_api_passphrase=get("polymarket_api_passphrase", ""),
+            anthropic_api_host=get("anthropic_api_host", ""),
+            gamma_api_host=get("gamma_api_host", ""),
+            clob_host=get("clob_host", ""),
+            exchange_address=get("exchange_address", ""),
+            neg_risk_exchange_address=get("neg_risk_exchange_address", ""),
+            email_enabled=get("email_enabled", False),
+            email_smtp_host=get("email_smtp_host", ""),
+            email_smtp_port=get("email_smtp_port", 587),
+            email_use_tls=get("email_use_tls", True),
+            email_user=get("email_user", ""),
+            email_password=get("email_password", ""),
+            email_to=get("email_to", ""),
+            data_dir=get("data_dir", "../data"),
         )

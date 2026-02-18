@@ -8,7 +8,7 @@ Available in **Python** and **.NET 8** — both implementations share the same l
 
 ## How It Works
 
-```
+```text
 Every 10 minutes:
   1. Scan all active Polymarket markets (Gamma API)
   2. Review existing positions — fetch current prices, check exit rules
@@ -29,73 +29,76 @@ Every 10 minutes:
 
 ## Quick Start
 
-### Python
+### 1. Create your config file
+
+Copy the template and fill in your API keys:
 
 ```bash
 git clone https://github.com/guberm/polymarket-bot.git
-cd polymarket-bot/python
-
-pip install -r requirements.txt
-
-# Paper trading (default)
-ANTHROPIC_API_KEY=sk-... python main.py
-
-# Verbose logging
-ANTHROPIC_API_KEY=sk-... python main.py --verbose
+cd polymarket-bot
+cp polymarket_bot_config.json.example polymarket_bot_config.json  # or create manually
+# Edit polymarket_bot_config.json with your keys
 ```
 
-### .NET
+Minimum required fields for paper trading:
+
+```json
+{
+  "anthropic_api_key": "sk-ant-...",
+  "anthropic_api_host": "https://api.anthropic.com",
+  "gamma_api_host": "https://gamma-api.polymarket.com",
+  "clob_host": "https://clob.polymarket.com"
+}
+```
+
+### 2. Run
+
+**Python:**
 
 ```bash
-git clone https://github.com/guberm/polymarket-bot.git
-cd polymarket-bot/dotnet/PolymarketBot
+cd python
+pip install -r requirements.txt
+python main.py           # paper trading
+python main.py --verbose # debug logging
+python main.py --console # human-readable console output
+```
 
-# Paper trading (default)
-ANTHROPIC_API_KEY=sk-... dotnet run
+**.NET:**
 
-# Verbose logging
-ANTHROPIC_API_KEY=sk-... dotnet run -- --verbose
+```bash
+cd dotnet/PolymarketBot
+dotnet run               # paper trading
+dotnet run -- --verbose  # debug logging
+dotnet run -- --console  # human-readable console output
+```
+
+**Windows (.bat):**
+
+```text
+run-bot.bat   ← double-click, reads polymarket_bot_config.json automatically
 ```
 
 ## Live Trading
 
 > **Warning:** Live trading uses real money. Start with paper trading to validate signals.
 
-### Python
-```bash
-cd python
-ANTHROPIC_API_KEY=sk-... \
-ANTHROPIC_API_HOST=https://api.anthropic.com \
-POLYMARKET_PRIVATE_KEY=0x... \
-POLYMARKET_FUNDER_ADDRESS=0x... \
-GAMMA_API_HOST=https://gamma-api.polymarket.com \
-CLOB_HOST=https://clob.polymarket.com \
-EXCHANGE_ADDRESS=0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E \
-NEG_RISK_EXCHANGE_ADDRESS=0xC5d563A36AE78145C45a50134d48A1215220f80a \
-LIVE_TRADING=true \
-python main.py
+Set these fields in `polymarket_bot_config.json`:
+
+```json
+{
+  "live_trading": true,
+  "polymarket_private_key": "0x...",
+  "polymarket_funder_address": "0x...",
+  "exchange_address": "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E",
+  "neg_risk_exchange_address": "0xC5d563A36AE78145C45a50134d48A1215220f80a"
+}
 ```
 
-### .NET
-```bash
-cd dotnet/PolymarketBot
-ANTHROPIC_API_KEY=sk-... \
-ANTHROPIC_API_HOST=https://api.anthropic.com \
-POLYMARKET_PRIVATE_KEY=0x... \
-POLYMARKET_FUNDER_ADDRESS=0x... \
-GAMMA_API_HOST=https://gamma-api.polymarket.com \
-CLOB_HOST=https://clob.polymarket.com \
-EXCHANGE_ADDRESS=0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E \
-NEG_RISK_EXCHANGE_ADDRESS=0xC5d563A36AE78145C45a50134d48A1215220f80a \
-LIVE_TRADING=true \
-dotnet run
-```
-
-Requires a funded Polymarket wallet on Polygon (chain ID 137). For Gnosis Safe wallets, set `POLYMARKET_SIGNATURE_TYPE=1`.
+Requires a funded Polymarket wallet on Polygon (chain ID 137). For Gnosis Safe wallets, set `"polymarket_signature_type": 1`.
 
 ## CLI Arguments
 
-Risk parameters can also be passed as command-line arguments (overriding env vars):
+Risk parameters can be overridden at startup (override config file):
 
 ```bash
 # Python
@@ -109,46 +112,77 @@ Available CLI args: `--max-position-pct`, `--max-total-exposure-pct`, `--max-cat
 
 ## Configuration
 
-All parameters are set via environment variables. Both implementations use the same env vars.
+All settings live in **`polymarket_bot_config.json`** at the project root. The file is not tracked by git (it contains secrets).
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | — | Required. Claude API key |
-| `LIVE_TRADING` | `false` | Set `true` for real orders |
-| `INITIAL_BANKROLL` | `10000` | Starting capital in USD |
-| `MIN_EDGE` | `0.08` | Minimum mispricing to trade (8%) |
-| `SCAN_INTERVAL_MINUTES` | `10` | Time between scan cycles |
-| `MARKETS_PER_CYCLE` | `30` | Max markets to evaluate per cycle |
-| `ENSEMBLE_SIZE` | `5` | Claude calls per market estimate |
-| `ENSEMBLE_TEMPERATURE` | `0.7` | Temperature for ensemble diversity |
-| `CLAUDE_MODEL` | `claude-sonnet-4-20250514` | Model for estimation |
-| `KELLY_FRACTION` | `0.25` | Fractional Kelly (0.25 = quarter Kelly) |
-| `MAX_POSITION_PCT` | `0.15` | Max 15% of bankroll per position |
-| `MAX_TOTAL_EXPOSURE_PCT` | `0.90` | Max 90% of bankroll in open positions |
-| `MAX_CATEGORY_EXPOSURE_PCT` | `0.50` | Max 50% per category |
-| `DAILY_STOP_LOSS_PCT` | `0.20` | Halt if daily loss exceeds 20% |
-| `MAX_DRAWDOWN_PCT` | `0.50` | Halt if drawdown exceeds 50% |
-| `MAX_CONCURRENT_POSITIONS` | `20` | Max open positions |
-| `MIN_TRADE_USD` | `1.0` | Minimum trade size in USD |
-| `ENABLE_POSITION_REVIEW` | `true` | Review positions for exits each cycle |
-| `POSITION_STOP_LOSS_PCT` | `0.30` | Sell if position drops > 30% |
-| `TAKE_PROFIT_PRICE` | `0.95` | Sell if price reaches 0.95+ |
-| `EXIT_EDGE_BUFFER` | `0.05` | Buffer before edge-gone exit triggers |
-| `POLYMARKET_PRIVATE_KEY` | — | Wallet private key (live trading) |
-| `POLYMARKET_FUNDER_ADDRESS` | — | Funder address (live trading) |
-| `POLYMARKET_SIGNATURE_TYPE` | `0` | Signature type (0=EOA, 1=GNOSIS_SAFE) |
-| `ANTHROPIC_API_HOST` | — | Anthropic API base URL |
-| `GAMMA_API_HOST` | — | Gamma API base URL (market discovery) |
-| `CLOB_HOST` | — | CLOB API base URL (price quotes, orders) |
-| `EXCHANGE_ADDRESS` | — | CTF Exchange contract address |
-| `NEG_RISK_EXCHANGE_ADDRESS` | — | Neg Risk CTF Exchange contract address |
+Config priority (highest wins): **CLI arg → env var → config file → code default**
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `live_trading` | `false` | Set `true` for real orders |
+| `initial_bankroll` | `10000` | Starting capital in USD |
+| `anthropic_api_key` | — | Required. Claude API key |
+| `anthropic_api_host` | — | Anthropic API base URL |
+| `claude_model` | `claude-sonnet-4-20250514` | Model for estimation |
+| `min_edge` | `0.08` | Minimum mispricing to trade (8%) |
+| `scan_interval_minutes` | `10` | Time between scan cycles |
+| `markets_per_cycle` | `30` | Max markets to evaluate per cycle |
+| `ensemble_size` | `5` | Claude calls per market estimate |
+| `ensemble_temperature` | `0.7` | Temperature for ensemble diversity |
+| `kelly_fraction` | `0.25` | Fractional Kelly (0.25 = quarter Kelly) |
+| `max_position_pct` | `0.15` | Max 15% of portfolio per position |
+| `max_total_exposure_pct` | `1.00` | Max 100% of portfolio in open positions |
+| `max_category_exposure_pct` | `0.80` | Max 80% per category |
+| `daily_stop_loss_pct` | `0.20` | Halt if daily loss exceeds 20% |
+| `max_drawdown_pct` | `0.50` | Halt if drawdown exceeds 50% |
+| `max_concurrent_positions` | `20` | Max open positions |
+| `min_trade_usd` | `1.0` | Minimum trade size in USD |
+| `enable_position_review` | `true` | Review positions for exits each cycle |
+| `position_stop_loss_pct` | `0.30` | Sell if position drops > 30% |
+| `take_profit_price` | `0.95` | Sell if price reaches 0.95+ |
+| `exit_edge_buffer` | `0.05` | Buffer before edge-gone exit triggers |
+| `polymarket_private_key` | — | Wallet private key (live trading) |
+| `polymarket_funder_address` | — | Funder address (live trading) |
+| `polymarket_signature_type` | `0` | Signature type (0=EOA, 1=GNOSIS_SAFE) |
+| `gamma_api_host` | — | Gamma API base URL (market discovery) |
+| `clob_host` | — | CLOB API base URL (price quotes, orders) |
+| `exchange_address` | — | CTF Exchange contract address |
+| `neg_risk_exchange_address` | — | Neg Risk CTF Exchange contract address |
+| `email_enabled` | `false` | Send email notifications |
+| `email_smtp_host` | — | SMTP server (e.g. `smtp.gmail.com`) |
+| `email_smtp_port` | `587` | SMTP port |
+| `email_use_tls` | `true` | Use STARTTLS; set `false` for SSL on port 465 |
+| `email_user` | — | SMTP login / sender address |
+| `email_password` | — | SMTP password (use app password for Gmail) |
+| `email_to` | — | Recipient address |
+
+All keys can also be set as environment variables (uppercase, underscores). For example, `anthropic_api_key` → `ANTHROPIC_API_KEY`. Env vars take priority over the config file.
+
+## Email Notifications
+
+Set `"email_enabled": true` in `polymarket_bot_config.json` to receive emails on every state change:
+
+| Event | Example subject |
+|-------|----------------|
+| Bot started | `Started: LIVE mode` |
+| Daily reset | `Daily reset — portfolio $37.50` |
+| Position opened | `BUY YES $5.00 — Will X happen?` |
+| Position closed | `SELL (stop_loss) -32.1% — Will X happen?` |
+| Market resolved | `Resolved (WON) PnL=+$5.00 — ...` |
+| Agent halted | `HALTED: Portfolio value < $1` |
+| Cycle error | `Error in cycle 42` |
+| Bot stopped | `Stopped — portfolio $35.20, PnL -$1.80` |
+
+For Gmail, create an [App Password](https://myaccount.google.com/apppasswords) instead of using your regular password.
 
 ## Project Structure
 
-```
+```text
+polymarket_bot_config.json     ← Your config (not tracked by git — contains secrets)
+
 python/                        ← Python implementation
   main.py                        Orchestration loop
-  config.py                      BotConfig dataclass (all env vars)
+  config.py                      BotConfig (reads config.json then env vars)
+  notifier.py                    Email notifications (smtplib)
   models.py                      Domain models (MarketInfo, Estimate, Signal, Position, Trade, ExitSignal, TopupCandidate)
   market_scanner.py              Gamma API integration, market filtering, batch price fetch
   estimator.py                   Claude ensemble estimation (trimmed mean)
@@ -160,12 +194,13 @@ python/                        ← Python implementation
 
 dotnet/PolymarketBot/          ← .NET 8 implementation
   Program.cs                     Orchestration loop (async)
-  BotConfig.cs                   Config from env vars
+  BotConfig.cs                   Config (reads config.json then env vars)
   Models/                        Domain models (including ExitSignal, TopupCandidate)
   Services/
     MarketScanner.cs             Gamma API integration, market filtering, batch price fetch
     Estimator.cs                 Claude ensemble via Anthropic REST API
     Portfolio.cs                 Kelly sizing, risk management, position review, API cost tracking
+    Notifier.cs                  Email notifications (System.Net.Mail)
     ClobApiClient.cs             CLOB API auth (EIP-712 + HMAC), order signing/posting (buy & sell)
     LiveTrader.cs                Live execution via CLOB API (buy & sell with GTC polling)
     PaperTrader.cs               Simulated execution
@@ -189,7 +224,7 @@ The bot uses the [Kelly criterion](https://en.wikipedia.org/wiki/Kelly_criterion
 
 **Formula:**
 
-```
+```text
 f* = (b × p - q) / b
 ```
 
@@ -201,18 +236,18 @@ Where:
 
 **Example:** A market is trading at $0.40 (implied 40% chance). Claude estimates the true probability is 55%.
 
-```
+```text
 b = (1 - 0.40) / 0.40 = 1.5        (risk $1 to win $1.50)
 f* = (1.5 × 0.55 - 0.45) / 1.5     = 0.25    (full Kelly says bet 25%)
 ```
 
-**Why fractional Kelly?** Full Kelly is mathematically optimal but extremely volatile — a small estimation error can lead to massive drawdowns. The bot defaults to **quarter Kelly** (`KELLY_FRACTION=0.25`), betting 25% of what full Kelly recommends. This sacrifices ~25% of the theoretical growth rate in exchange for ~75% less variance. The resulting bet in the example above:
+**Why fractional Kelly?** Full Kelly is mathematically optimal but extremely volatile — a small estimation error can lead to massive drawdowns. The bot defaults to **quarter Kelly** (`kelly_fraction: 0.25`), betting 25% of what full Kelly recommends. This sacrifices ~25% of the theoretical growth rate in exchange for ~75% less variance. The resulting bet in the example above:
 
-```
+```text
 Actual bet = 0.25 × 25% = 6.25% of bankroll
 ```
 
-This is then capped by `MAX_POSITION_PCT` (default 15%) and must pass all risk checks before execution.
+This is then capped by `max_position_pct` (default 15%) and must pass all risk checks before execution.
 
 ### Position Review & Exits
 
@@ -230,9 +265,9 @@ Buy orders are placed at midpoint + 2 tick sizes to cross the spread and fill im
 
 Five layers of protection:
 
-1. **Per-position cap** — max 15% of bankroll on any single market
-2. **Per-category cap** — max 50% exposure in politics, sports, crypto, etc.
-3. **Total exposure cap** — max 90% of bankroll in open positions
+1. **Per-position cap** — max 15% of portfolio on any single market
+2. **Per-category cap** — max 80% exposure in politics, sports, crypto, etc.
+3. **Total exposure cap** — max 100% of portfolio in open positions
 4. **Daily stop-loss** — halt trading if daily losses exceed 20%
 5. **Max drawdown** — halt if drawdown from peak exceeds 50%
 
@@ -242,7 +277,7 @@ Daily stop-loss and drawdown are calculated against **portfolio value** (bankrol
 
 API costs (Claude inference) are deducted from the bankroll every cycle. The agent must generate enough edge to cover its own operating costs.
 
-To avoid spending the last USDC on API calls when no trades are possible, the estimation loop stops early if `bankroll < $0.30`. The bot continues running (monitoring positions, waiting for exits) and resumes estimation once USDC returns from resolved/exited positions.
+To avoid spending the last USDC on API calls when no trades are possible, the estimation loop stops early if `bankroll < $0.30`. The bot also skips the Gamma API scan entirely if the bankroll is too low to fund the smallest possible position — saving ~15s per cycle. The bot continues running (monitoring positions, waiting for exits) and resumes full operation once USDC returns from resolved/exited positions.
 
 The agent truly halts only when total portfolio value (`bankroll + open position value`) drops below $1. This prevents false halts when capital is deployed in positions but free USDC is temporarily low. A stale halt flag from a previous session is automatically cleared on restart if the portfolio is still healthy.
 

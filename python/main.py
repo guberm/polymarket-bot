@@ -21,6 +21,7 @@ from logger_setup import setup_logging
 from market_scanner import MarketScanner
 from estimator import Estimator
 from models import Trade, TradeAction
+from notifier import Notifier
 from portfolio import Portfolio
 from trader import PaperTrader, LiveTrader
 from persistence import load_snapshot, save_snapshot, append_trade
@@ -116,6 +117,7 @@ def main():
 
     scanner = MarketScanner(config)
     estimator = Estimator(config)
+    notifier = Notifier(config)
 
     if config.live_trading:
         if not config.polymarket_private_key and not config.polymarket_api_key:
@@ -132,6 +134,8 @@ def main():
                 print(f"[{ts()}] BALANCE: ${init_bal:.2f} (on-chain)")
     else:
         trader = PaperTrader()
+
+    notifier.notify_started(mode, portfolio.bankroll, len(portfolio.positions))
 
     # Graceful shutdown on Ctrl+C
     running = True
@@ -155,6 +159,7 @@ def main():
             log.warning("Portfolio halted — stopping")
             if con:
                 print(f"[{ts()}] {RED}HALTED: portfolio risk limit reached, stopping bot{RESET}")
+            notifier.notify_halted("Risk limit reached", portfolio)
             break
 
         # Daily reset check
@@ -165,6 +170,7 @@ def main():
             log.info(f"New day — daily start value reset to ${portfolio.bankroll:.2f}")
             if con:
                 print(f"[{ts()}] NEW DAY: daily PnL reset, start=${portfolio.bankroll:.2f}")
+            notifier.notify_daily_reset(portfolio)
 
         log.info(f"--- Cycle {cycle} ---")
 
@@ -240,6 +246,7 @@ def main():
                 )
                 append_trade(trade, config.data_dir)
                 save_snapshot(portfolio.snapshot(), config.data_dir)
+                notifier.notify_resolved(pos, won, pnl, portfolio)
 
             if resolved_count > 0:
                 log.info(f"  {resolved_count} market(s) resolved")
@@ -290,6 +297,7 @@ def main():
                     append_trade(trade, config.data_dir)
                     save_snapshot(portfolio.snapshot(), config.data_dir)
                     exits_this_cycle += 1
+                    notifier.notify_sell(trade, es.exit_reason, es.pnl_pct, portfolio)
                     if con:
                         print(f"[{ts()}]     {GREEN}SOLD OK{RESET}")
                 else:
@@ -338,6 +346,7 @@ def main():
                     append_trade(trade, config.data_dir)
                     save_snapshot(portfolio.snapshot(), config.data_dir)
                     exits_this_cycle += 1
+                    notifier.notify_topup_sell(trade, tc, portfolio)
                     if con:
                         print(f"[{ts()}]     {GREEN}TOPUP+SELL OK (freed ${tc.recovery_value:.2f}){RESET}")
                 else:
@@ -440,6 +449,7 @@ def main():
                     if con:
                         print(f"[{ts()}] {RED}DEAD: portfolio value depleted{RESET}")
                     portfolio.is_halted = True
+                    notifier.notify_halted("Portfolio value < $1 — agent is dead", portfolio)
                     break
 
                 # Generate signal
@@ -494,6 +504,7 @@ def main():
                     append_trade(trade, config.data_dir)
                     save_snapshot(portfolio.snapshot(), config.data_dir)
                     trades_this_cycle += 1
+                    notifier.notify_trade(trade, signal_obj, portfolio)
 
                     log.info(
                         f"  [{i}/{len(eligible)}] TRADE OK: {trade.side.value} {market.question[:50]}... "
@@ -527,6 +538,7 @@ def main():
             log.error(f"Cycle {cycle} error: {e}", exc_info=True)
             if con:
                 print(f"\n[{ts()}] {RED}ERROR: {e}{RESET}")
+            notifier.notify_error(cycle, e)
 
         # Sleep in 1-second ticks for responsive shutdown
         if running:
@@ -540,6 +552,7 @@ def main():
 
     # Final save
     save_snapshot(portfolio.snapshot(), config.data_dir)
+    notifier.notify_stopped(portfolio)
     log.info(
         f"Bot stopped | Final bankroll: ${portfolio.bankroll:.2f} | "
         f"Total trades: {portfolio.total_trades} | "
