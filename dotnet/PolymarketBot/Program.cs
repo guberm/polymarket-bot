@@ -413,11 +413,27 @@ while (!cts.Token.IsCancellationRequested)
 
     try
     {
+        // Skip market scan entirely if bankroll can't fund the smallest possible
+        // trade. Saves the ~15s Gamma API call when no trade is possible.
+        var pvPre = portfolio.Bankroll + portfolio.TotalExposure();
+        var minPosPre = config.MaxPositionPct * pvPre * 0.5;
+        var minRequired = Math.Max(minPosPre, config.MinTradeUsd);
+        var tradesThisCycle = 0;
+
+        if (portfolio.Bankroll < minRequired)
+        {
+            log.LogInformation(
+                "Bankroll ${Bankroll:F2} too low to trade (min ~${Min:F2}) — skipping scan",
+                portfolio.Bankroll, minRequired);
+            Con($"SCAN SKIP: bankroll ${portfolio.Bankroll:F2} < min ${minRequired:F2}");
+        }
+        else
+        {
+
         log.LogInformation("Scanning markets...");
         Con("SCAN: fetching markets...");
         var markets = await scanner.ScanAsync(cts.Token);
         var eligible = markets.Take(config.MarketsPerCycle).ToList();
-        var tradesThisCycle = 0;
 
         Con($"SCAN: {markets.Count} total, evaluating top {eligible.Count}");
 
@@ -558,6 +574,8 @@ while (!cts.Token.IsCancellationRequested)
                 Con($"  {idx} {RED}TRADE FAILED{RESET}");
             }
         }
+
+        } // end else (scan block)
 
         // Cycle summary
         log.LogInformation(

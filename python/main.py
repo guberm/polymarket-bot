@@ -352,15 +352,31 @@ def main():
                 )
 
         try:
-            log.info("Scanning markets...")
-            if con:
-                print(f"[{ts()}] SCAN: fetching markets...")
-            markets = scanner.scan()
-            eligible = markets[:config.markets_per_cycle]
+            # Skip scan entirely if bankroll can't fund the smallest possible trade.
+            # Saves ~10s Gamma API call when no trade is possible.
+            pv_pre = portfolio.bankroll + portfolio.total_exposure()
+            min_pos_pre = config.max_position_pct * pv_pre * 0.5
+            min_required = max(min_pos_pre, config.min_trade_usd)
             trades_this_cycle = 0
 
-            if con:
-                print(f"[{ts()}] SCAN: {len(markets)} total, evaluating top {len(eligible)}")
+            if portfolio.bankroll < min_required:
+                log.info(
+                    f"Bankroll ${portfolio.bankroll:.2f} too low to trade "
+                    f"(min ~${min_required:.2f}) — skipping scan"
+                )
+                if con:
+                    print(f"[{ts()}] SCAN SKIP: bankroll ${portfolio.bankroll:.2f} < min ${min_required:.2f}")
+                markets = []
+                eligible = []
+            else:
+                log.info("Scanning markets...")
+                if con:
+                    print(f"[{ts()}] SCAN: fetching markets...")
+                markets = scanner.scan()
+                eligible = markets[:config.markets_per_cycle]
+
+                if con:
+                    print(f"[{ts()}] SCAN: {len(markets)} total, evaluating top {len(eligible)}")
 
             # Pre-check: skip estimation entirely if exposure is at the limit
             # Use portfolio value (bankroll + exposure) as base, not just bankroll
