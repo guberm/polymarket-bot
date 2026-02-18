@@ -137,7 +137,9 @@ class LiveTrader:
         from py_clob_client.order_builder.constants import BUY
 
         market = signal.market
-        price = signal.market_price
+        # Add 2-tick aggression (+0.02) so the buy order crosses the spread
+        # and fills immediately as a taker. Edge >>8% covers this tiny cost.
+        price = min(round(signal.market_price + 0.02, 2), 0.99)
         size_usd = signal.position_size_usd
         token_id = market.token_id_yes if signal.side == Side.YES else market.token_id_no
 
@@ -170,10 +172,11 @@ class LiveTrader:
             log.error(f"CLOB order failed: {e}")
             return None
 
-        # GTC orders may not fill immediately — poll status before tracking
+        # GTC orders — poll for fill. With +2-tick aggression the order should
+        # cross the spread and fill as a taker within a few seconds.
         matched = False
-        for attempt in range(3):
-            time.sleep(2)
+        for attempt in range(5):
+            time.sleep(3)
             try:
                 order_info = self.client.get_order(order_id)
                 status = order_info.get("status") if isinstance(order_info, dict) else None
@@ -188,7 +191,7 @@ class LiveTrader:
                 break
 
         if not matched:
-            log.warning(f"GTC order not filled after 6s, cancelling: {order_id}")
+            log.warning(f"GTC order not filled after 15s, cancelling: {order_id}")
             try:
                 self.client.cancel(order_id)
             except Exception as e:
@@ -280,7 +283,7 @@ class LiveTrader:
                 break
 
         if not matched:
-            log.warning(f"SELL order not filled after 6s, cancelling: {order_id}")
+            log.warning(f"SELL order not filled after 15s, cancelling: {order_id}")
             try:
                 self.client.cancel(order_id)
             except Exception:
@@ -352,7 +355,7 @@ class LiveTrader:
                 break
 
         if not buy_matched:
-            log.warning(f"TOPUP BUY not filled after 6s, cancelling: {buy_order_id}")
+            log.warning(f"TOPUP BUY not filled after 15s, cancelling: {buy_order_id}")
             try:
                 self.client.cancel(buy_order_id)
             except Exception:
@@ -400,7 +403,7 @@ class LiveTrader:
 
         if not sell_matched:
             log.warning(
-                f"TOPUP SELL not filled after 6s, cancelling: {sell_order_id} "
+                f"TOPUP SELL not filled after 15s, cancelling: {sell_order_id} "
                 f"(position now sellable with {total_shares:.2f} tokens)"
             )
             try:

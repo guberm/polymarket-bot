@@ -100,6 +100,10 @@ def main():
     snapshot = load_snapshot(config.data_dir)
     portfolio = Portfolio(config, snapshot)
     if snapshot:
+        # Clear a stale IsHalted flag if portfolio value is still healthy.
+        if portfolio.is_halted and portfolio.bankroll + portfolio.total_exposure() >= 1.0:
+            portfolio.is_halted = False
+            log.info(f"Cleared stale is_halted flag (portfolio value ${portfolio.bankroll + portfolio.total_exposure():.2f} is healthy)")
         log.info(f"Resumed from saved state: ${portfolio.bankroll:.2f} bankroll, {len(portfolio.positions)} positions")
         if con:
             print(f"[{ts()}] RESUME: ${portfolio.bankroll:.2f} bankroll, {len(portfolio.positions)} positions, ${portfolio.total_exposure():.2f} exposure")
@@ -163,6 +167,13 @@ def main():
                 print(f"[{ts()}] NEW DAY: daily PnL reset, start=${portfolio.bankroll:.2f}")
 
         log.info(f"--- Cycle {cycle} ---")
+
+        # Sync on-chain USDC balance at start of each cycle (live trading only)
+        if isinstance(trader, LiveTrader):
+            cycle_bal = trader.get_balance()
+            if cycle_bal is not None:
+                portfolio.sync_balance(cycle_bal)
+
         pv = portfolio.bankroll + portfolio.total_exposure()
         log.info(
             f"Portfolio: ${pv:.2f} "
@@ -381,6 +392,18 @@ def main():
                 if at_capacity:
                     continue
 
+                # Skip estimation if bankroll too low to cover API costs this cycle.
+                # Bot continues running for position review; resumes when USDC returns.
+                MIN_API_RESERVE = 0.30
+                if portfolio.bankroll < MIN_API_RESERVE:
+                    log.info(
+                        f"  Bankroll ${portfolio.bankroll:.2f} < ${MIN_API_RESERVE:.2f} reserve "
+                        f"— stopping estimation this cycle"
+                    )
+                    if con:
+                        print(f"[{ts()}]   API RESERVE LOW (${portfolio.bankroll:.2f}) — skipping remaining evaluations")
+                    break
+
                 # Estimate fair value
                 log.info(f"  [{i}/{len(eligible)}] Evaluating: {market.question[:60]}...")
                 if con:
@@ -395,10 +418,11 @@ def main():
                 # Agent pays for its own inference
                 portfolio.record_api_cost(estimate.input_tokens_used, estimate.output_tokens_used)
 
-                if portfolio.bankroll <= 0:
-                    log.warning("Bankroll depleted by API costs — agent is dead")
+                # Only halt if total portfolio value is truly depleted
+                if portfolio.bankroll + portfolio.total_exposure() < 1.0:
+                    log.warning("Portfolio value < $1 — agent is dead")
                     if con:
-                        print(f"[{ts()}] {RED}DEAD: bankroll depleted by API costs{RESET}")
+                        print(f"[{ts()}] {RED}DEAD: portfolio value depleted{RESET}")
                     portfolio.is_halted = True
                     break
 

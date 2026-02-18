@@ -55,11 +55,12 @@ public sealed class LiveTrader : ITrader
             return null;
         }
 
-        // GTC orders may not fill immediately — poll status before tracking as position
+        // GTC orders may not fill immediately — poll status before tracking as position.
+        // With +2-tick aggression the order should cross the spread and fill quickly.
         bool matched = false;
-        for (int attempt = 0; attempt < 3; attempt++)
+        for (int attempt = 0; attempt < 5; attempt++)
         {
-            await Task.Delay(2000, ct);
+            await Task.Delay(3000, ct);
             var status = await _clob.GetOrderStatusAsync(result.OrderId, ct);
             if (status == "MATCHED")
             {
@@ -73,7 +74,7 @@ public sealed class LiveTrader : ITrader
 
         if (!matched)
         {
-            _log.LogWarning("GTC order not filled after 6s, cancelling: {OrderId}", result.OrderId);
+            _log.LogWarning("GTC order not filled after 15s, cancelling: {OrderId}", result.OrderId);
             await _clob.CancelOrderAsync(result.OrderId, ct);
             return null;
         }

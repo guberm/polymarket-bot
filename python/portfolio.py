@@ -156,9 +156,11 @@ class Portfolio:
                 self.is_halted = True
                 return False
 
-        # Agent death condition
-        if self.bankroll <= 0:
-            log.warning("HALT: Bankroll depleted — agent is dead")
+        # Agent death — only when total portfolio value (free cash + open positions)
+        # drops below $1. Negative bankroll from API costs while holding positions
+        # is normal: positions will eventually resolve and return USDC.
+        if self.bankroll + self.total_exposure() < 1.0:
+            log.warning("HALT: Portfolio value < $1 — agent is dead")
             self.is_halted = True
             return False
 
@@ -326,34 +328,26 @@ class Portfolio:
     def sync_balance(self, actual_usdc_balance: float) -> None:
         """Sync bankroll from actual on-chain USDC balance.
 
-        When positions are open, on-chain USDC only shows free cash — capital
-        deployed in conditional tokens isn't included.  Internal tracking is
-        more reliable for upward drift, so we only increase bankroll when no
-        positions are open.  However, if on-chain is LOWER than internal
-        bankroll (e.g. fees, failed order deductions), we always sync down
-        to avoid trying to spend money we don't have.
+        On-chain USDC is always the free cash (bankroll) — conditional tokens
+        are held separately in the CLOB and not reflected in USDC balance.
+        Always syncs both up and down so the bot has an accurate view of
+        spendable funds (handles resolved-position payouts, deposits, fees, etc.)
         """
-        if self.positions:
-            if actual_usdc_balance < self.bankroll - 0.001:
-                old_bankroll = self.bankroll
-                self.bankroll = actual_usdc_balance
-                log.warning(
-                    f"Balance sync (downward): ${old_bankroll:.2f} -> ${self.bankroll:.2f} "
-                    f"(on-chain lower, {len(self.positions)} positions open)"
-                )
-            else:
-                log.info(
-                    f"On-chain USDC: ${actual_usdc_balance:.2f} "
-                    f"(internal bankroll: ${self.bankroll:.2f}, "
-                    f"{len(self.positions)} positions open — skipping sync)"
-                )
+        prev = self.bankroll
+        diff = actual_usdc_balance - prev
+        if abs(diff) <= 0.001:
             return
-
-        old_bankroll = self.bankroll
         self.bankroll = actual_usdc_balance
-        diff = self.bankroll - old_bankroll
-        if abs(diff) > 0.001:
-            log.info(f"Balance sync: ${old_bankroll:.2f} -> ${self.bankroll:.2f} (diff=${diff:+.2f})")
+        if diff > 0:
+            log.info(
+                f"Balance sync (upward): ${prev:.2f} -> ${self.bankroll:.2f} "
+                f"(+${diff:.2f}, {len(self.positions)} positions open)"
+            )
+        else:
+            log.warning(
+                f"Balance sync (downward): ${prev:.2f} -> ${self.bankroll:.2f} "
+                f"(${diff:.2f}, {len(self.positions)} positions open)"
+            )
         self.high_water_mark = max(self.high_water_mark, self.bankroll + self.total_exposure())
 
     # ── Cost tracking ─────────────────────────────────────────────────

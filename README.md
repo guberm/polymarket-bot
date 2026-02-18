@@ -4,7 +4,7 @@ Autonomous trading agent for [Polymarket](https://polymarket.com) prediction mar
 
 Available in **Python** and **.NET 8** — both implementations share the same logic, config, and data formats.
 
-**The agent pays for its own inference.** Claude API costs are deducted from the bankroll each cycle. If the bankroll hits $0, the agent dies.
+**The agent pays for its own inference.** Claude API costs are deducted from the bankroll each cycle. If the total portfolio value (bankroll + open positions) drops below $1, the agent halts.
 
 ## How It Works
 
@@ -22,7 +22,7 @@ Every 10 minutes:
   5. Find mispricing > 8% between estimate and market price
   6. Size position using fractional Kelly criterion (max 15% of bankroll)
   7. Check risk limits (per-position, per-category, total exposure, drawdown)
-  8. Execute trade (paper or live via CLOB GTC orders)
+  8. Execute trade (paper or live via CLOB GTC limit orders, +2 ticks aggression for immediate fills)
   9. Deduct API costs from bankroll
   10. Save state and repeat
 ```
@@ -224,7 +224,7 @@ Each cycle, before scanning for new trades, the bot reviews all open positions:
 - **Penny filter** — skip positions priced below $0.01 (can't create valid CLOB sell orders at sub-cent prices)
 - **Top-up-and-sell** — tiny positions (<5 tokens) that trigger an exit are rescued by buying 5 more tokens to reach the CLOB minimum, then selling all
 
-Sell orders use GTC (Good-Till-Cancelled) with a 6-second fill timeout. The top-up-and-sell algorithm handles positions that are too small to sell directly: it buys 5 tokens (CLOB minimum order size), then immediately sells the full position. If the buy fills but the sell doesn't, the position becomes sellable on the next cycle.
+Buy orders are placed at midpoint + 2 tick sizes to cross the spread and fill immediately as taker orders. Sell orders use the midpoint price. GTC orders poll for fill for up to 15 seconds, then cancel if unfilled. The top-up-and-sell algorithm handles positions that are too small to sell directly: it buys 5 tokens (CLOB minimum order size), then immediately sells the full position. If the buy fills but the sell doesn't, the position becomes sellable on the next cycle.
 
 ### Risk Management
 
@@ -240,7 +240,11 @@ Daily stop-loss and drawdown are calculated against **portfolio value** (bankrol
 
 ### Agent Survival
 
-API costs (Claude inference) are deducted from the bankroll every cycle. The agent must generate enough edge to cover its own operating costs. If the bankroll reaches $0 — from trading losses or API bills — `is_halted` flips to `true` and the bot stops.
+API costs (Claude inference) are deducted from the bankroll every cycle. The agent must generate enough edge to cover its own operating costs.
+
+To avoid spending the last USDC on API calls when no trades are possible, the estimation loop stops early if `bankroll < $0.30`. The bot continues running (monitoring positions, waiting for exits) and resumes estimation once USDC returns from resolved/exited positions.
+
+The agent truly halts only when total portfolio value (`bankroll + open position value`) drops below $1. This prevents false halts when capital is deployed in positions but free USDC is temporarily low. A stale halt flag from a previous session is automatically cleared on restart if the portfolio is still healthy.
 
 ## Disclaimer
 

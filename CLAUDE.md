@@ -105,7 +105,7 @@ dotnet/PolymarketBot/
 
 **Data flow per cycle (both implementations):**
 
-1. **Balance sync** — fetch on-chain USDC, sync bankroll (downward allowed with positions open)
+1. **Balance sync** — fetch on-chain USDC every cycle, sync bankroll in both directions (up = resolved positions returned USDC; down = fees/failed orders)
 2. **Position review** — fetch midpoint prices, check exit rules (stop-loss/take-profit/edge-gone), execute SELLs, top-up-and-sell tiny positions
 3. `MarketScanner.Scan()` → list of `MarketInfo` (filtered by liquidity, volume, time-to-resolution)
 4. `Estimator.Estimate()` → `Estimate` per market (ensemble of N Claude calls, trimmed mean)
@@ -132,10 +132,11 @@ dotnet/PolymarketBot/
 - **Agent pays for inference** — API token costs are deducted from bankroll each cycle
 - **Atomic persistence** — portfolio.json written via tmp+rename to avoid corruption on crash
 - **Polygon chain** (chain ID 137) for Polymarket settlement
-- **Live trading** uses GTC (Good-Till-Cancelled) limit orders with 6-second fill timeout, poll for MATCHED status, cancel if unfilled
+- **Live trading** uses GTC (Good-Till-Cancelled) limit orders. BUY price = midpoint + 2 tick sizes (crosses the spread for immediate taker fills). Poll 5×3s = 15s for MATCHED status, cancel if unfilled
 - **Position review** each cycle: stop-loss (>30% drop), take-profit (price≥0.95), edge-gone (market past fair estimate). Penny positions (<$0.01) skipped — unsellable on CLOB
 - **Top-up-and-sell** for tiny positions (<5 tokens) with exit signals: BUY 5 tokens (CLOB minimum) then SELL all. If BUY fills but SELL doesn't, position becomes sellable next cycle. Skipped if bankroll < topup cost
 - **SELL orders** use Side=1, makerAmount=tokens, takerAmount=USDC (reversed from BUY). Minimum 5 tokens enforced
+- **Agent survival**: estimation loop stops when bankroll < $0.30 (API reserve guard) — bot keeps running for position review. Agent truly "dead" only when `bankroll + TotalExposure() < $1`. `IsHalted` is auto-cleared on restart if portfolio value is healthy (transient low-USDC halts don't persist)
 - **.NET version** uses direct HttpClient calls to Anthropic REST API (no SDK dependency)
 - **.NET CLOB auth** implements EIP-712 signing (ClobAuth struct for L1, Order struct for orders) + HMAC-SHA256 for L2, using Nethereum.Signer for Keccak/ECDSA
 - **No hardcoded URLs or contract addresses** — all endpoints/contracts come from env vars

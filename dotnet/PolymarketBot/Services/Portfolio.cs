@@ -198,10 +198,12 @@ public sealed class Portfolio
             }
         }
 
-        // Agent death
-        if (Bankroll <= 0)
+        // Agent death — only when total portfolio value (free cash + open positions)
+        // drops below $1. Negative bankroll from API costs while holding positions
+        // is normal: positions will eventually resolve and return USDC.
+        if (Bankroll + TotalExposure() < 1.0)
         {
-            _log.LogWarning("HALT: Bankroll depleted — agent is dead");
+            _log.LogWarning("HALT: Portfolio value < $1 — agent is dead");
             IsHalted = true;
             return false;
         }
@@ -389,41 +391,28 @@ public sealed class Portfolio
 
     /// <summary>
     /// Sync bankroll from actual on-chain USDC balance.
-    /// When positions are open, on-chain USDC only shows free cash — capital
-    /// deployed in conditional tokens isn't included. Internal tracking is
-    /// more reliable, so we only replace bankroll when there are no open positions.
+    /// On-chain USDC is always the free cash (bankroll) — conditional tokens
+    /// are held separately in the CLOB and not reflected in USDC balance.
+    /// Always syncs both up and down so the bot has an accurate view of
+    /// spendable funds (handles resolved-position payouts, deposits, fees, etc.)
     /// </summary>
     public void SyncBalance(double actualUsdcBalance)
     {
-        if (Positions.Count > 0)
-        {
-            // If on-chain is LOWER than internal bankroll, sync down to avoid
-            // trying to spend money we don't have (fees, failed order deductions, etc.)
-            if (actualUsdcBalance < Bankroll - 0.001)
-            {
-                var oldBankroll = Bankroll;
-                Bankroll = actualUsdcBalance;
-                _log.LogWarning(
-                    "Balance sync (downward): ${Old:F2} -> ${New:F2} (on-chain lower, {Count} positions open)",
-                    oldBankroll, Bankroll, Positions.Count);
-            }
-            else
-            {
-                _log.LogInformation(
-                    "On-chain USDC: ${Actual:F2} (internal bankroll: ${Internal:F2}, {Count} positions open — skipping sync)",
-                    actualUsdcBalance, Bankroll, Positions.Count);
-            }
-            return;
-        }
-
         var prevBankroll = Bankroll;
+        var diff = actualUsdcBalance - prevBankroll;
+        if (Math.Abs(diff) <= 0.001)
+            return;
+
         Bankroll = actualUsdcBalance;
-        var diff = Bankroll - prevBankroll;
-        if (Math.Abs(diff) > 0.001)
-        {
-            _log.LogInformation("Balance sync: ${Old:F2} -> ${New:F2} (diff=${Diff:+0.00;-0.00})",
-                prevBankroll, Bankroll, diff);
-        }
+        if (diff > 0)
+            _log.LogInformation(
+                "Balance sync (upward): ${Old:F2} -> ${New:F2} (+${Diff:F2}, {Count} positions open)",
+                prevBankroll, Bankroll, diff, Positions.Count);
+        else
+            _log.LogWarning(
+                "Balance sync (downward): ${Old:F2} -> ${New:F2} (${Diff:F2}, {Count} positions open)",
+                prevBankroll, Bankroll, diff, Positions.Count);
+
         HighWaterMark = Math.Max(HighWaterMark, Bankroll + TotalExposure());
     }
 

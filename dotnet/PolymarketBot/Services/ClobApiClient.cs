@@ -166,8 +166,12 @@ public sealed class ClobApiClient
         _log.LogDebug("Order metadata: tickSize={Tick}, negRisk={NegRisk}, decimals={Dec}",
             tickSize, negRisk, decimals);
 
-        // 2. Round price to tick size (CLOB validates derived price matches tick)
-        double roundedPrice = Math.Round(price, decimals);
+        // 2. Round price to tick size, then add 2 ticks of aggression so the
+        //    buy order crosses the spread and fills immediately (taker order).
+        //    Edge is >>8% so paying 2 extra ticks (~1-2¢) is negligible.
+        double tickSizeD = double.Parse(tickSize, System.Globalization.CultureInfo.InvariantCulture);
+        double roundedPrice = Math.Round(price + 2 * tickSizeD, decimals);
+        roundedPrice = Math.Min(roundedPrice, 1.0 - tickSizeD); // never exceed (1 - tick)
 
         // 3. Calculate amounts (6-decimal USDC units)
         // For GTC BUY: takerAmount = tokens to receive (max 2 dp), makerAmount = USDC to spend (max 4 dp)

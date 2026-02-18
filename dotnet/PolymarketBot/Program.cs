@@ -123,6 +123,15 @@ var portfolio = new Portfolio(config, loggerFactory.CreateLogger<Portfolio>(), s
 
 if (snapshot is not null)
 {
+    // Clear a stale IsHalted flag if portfolio value is still healthy.
+    // The bankroll-depleted halt is transient (positions will return USDC),
+    // so don't carry it across restarts when portfolio_value > $1.
+    if (portfolio.IsHalted && portfolio.Bankroll + portfolio.TotalExposure() >= 1.0)
+    {
+        portfolio.IsHalted = false;
+        log.LogInformation("Cleared stale IsHalted flag (portfolio value ${Pv:F2} is healthy)",
+            portfolio.Bankroll + portfolio.TotalExposure());
+    }
     log.LogInformation("Resumed from saved state: ${Bankroll:F2} bankroll, {Positions} positions",
         portfolio.Bankroll, portfolio.Positions.Count);
     Con($"RESUME: ${portfolio.Bankroll:F2} bankroll, {portfolio.Positions.Count} positions, ${portfolio.TotalExposure():F2} exposure");
@@ -209,6 +218,15 @@ while (!cts.Token.IsCancellationRequested)
     }
 
     log.LogInformation("--- Cycle {Cycle} ---", cycle);
+
+    // Sync on-chain USDC balance at start of each cycle (live trading only)
+    if (trader is LiveTrader ltSync)
+    {
+        var cycleBal = await ltSync.GetBalanceAsync(cts.Token);
+        if (cycleBal is not null)
+            portfolio.SyncBalance(cycleBal.Value);
+    }
+
     {
         var pvLog = portfolio.Bankroll + portfolio.TotalExposure();
         log.LogInformation(
@@ -438,6 +456,19 @@ while (!cts.Token.IsCancellationRequested)
             if (atCapacity)
                 continue;
 
+            // Skip estimation if bankroll too low to cover API costs for this cycle.
+            // The bot continues running for position review; estimation resumes when
+            // positions exit and USDC returns to the wallet.
+            const double MinApiReserve = 0.30;
+            if (portfolio.Bankroll < MinApiReserve)
+            {
+                log.LogInformation(
+                    "  Bankroll ${Bankroll:F2} < ${Reserve:F2} reserve — stopping estimation this cycle",
+                    portfolio.Bankroll, MinApiReserve);
+                Con($"  API RESERVE LOW (${portfolio.Bankroll:F2}) — skipping remaining evaluations");
+                break;
+            }
+
             // Estimate fair value
             log.LogInformation("  {Idx} Evaluating: {Question}...", idx, Truncate(market.Question, 60));
             Con($"  {idx} EVAL: {Truncate(market.Question, 55)}...");
@@ -452,10 +483,11 @@ while (!cts.Token.IsCancellationRequested)
             // Agent pays for inference
             portfolio.RecordApiCost(estimate.InputTokensUsed, estimate.OutputTokensUsed);
 
-            if (portfolio.Bankroll <= 0)
+            // Only halt if total portfolio value (not just free USDC) is depleted
+            if (portfolio.Bankroll + portfolio.TotalExposure() < 1.0)
             {
-                log.LogWarning("Bankroll depleted by API costs — agent is dead");
-                Con($"{RED}DEAD: bankroll depleted by API costs{RESET}");
+                log.LogWarning("Portfolio value < $1 — agent is dead");
+                Con($"{RED}DEAD: portfolio value depleted{RESET}");
                 portfolio.IsHalted = true;
                 break;
             }
