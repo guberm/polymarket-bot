@@ -235,34 +235,55 @@ class LiveTrader:
             kelly_at_entry=signal.kelly_fraction,
         )
 
+    def _get_actual_conditional_balance(self, token_id: str) -> Optional[float]:
+        """Refresh CLOB cache and return actual on-chain conditional token balance."""
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        try:
+            # Refresh CLOB's cached view of on-chain state
+            self.client.update_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=token_id, signature_type=-1)
+            )
+        except Exception as e:
+            log.debug(f"Conditional allowance update: {e}")
+        try:
+            resp = self.client.get_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=token_id, signature_type=-1)
+            )
+            balance_raw = float(resp.get("balance", 0))
+            balance = balance_raw / 1_000_000.0
+            log.info(f"[COND-BALANCE] {token_id[:12]}: {balance:.2f} tokens on-chain")
+            return balance
+        except Exception as e:
+            log.warning(f"Conditional balance check failed: {e}")
+            return None
+
     def execute_sell(self, exit_signal: ExitSignal, portfolio: Portfolio) -> Optional[Trade]:
-        from py_clob_client.clob_types import OrderArgs, OrderType, BalanceAllowanceParams, AssetType
+        from py_clob_client.clob_types import OrderArgs, OrderType
         from py_clob_client.order_builder.constants import SELL
 
         pos = exit_signal.position
         price = exit_signal.current_price
 
-        # Refresh CLOB's cached on-chain state for this conditional token.
-        # Without this, the CLOB may have a stale/zero allowance and reject the SELL.
-        try:
-            self.client.update_balance_allowance(
-                BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=pos.token_id, signature_type=-1)
-            )
-        except Exception as e:
-            log.debug(f"Conditional allowance update (pre-sell): {e}")
+        # Get actual on-chain balance — GTC BUY orders can partially fill.
+        # Portfolio may record more shares than actually settled on-chain.
+        sell_shares = pos.shares
+        actual_balance = self._get_actual_conditional_balance(pos.token_id)
+        if actual_balance is not None and actual_balance < sell_shares:
+            log.warning(f"Partial-fill detected: portfolio={sell_shares:.2f} tokens, on-chain={actual_balance:.2f}; selling actual amount")
+            sell_shares = actual_balance
 
         if price < 0.01:
             log.warning(f"SKIP SELL (price {price:.4f} too low for CLOB): {pos.question[:40]}")
             return None
 
-        if pos.shares < 5.0:
-            log.warning(f"SKIP SELL (below CLOB minimum 5 tokens): {pos.question[:40]} {pos.shares:.2f} shares")
+        if sell_shares < 5.0:
+            log.warning(f"SKIP SELL (below CLOB minimum 5 tokens): {pos.question[:40]} {sell_shares:.2f} shares")
             return None
 
         try:
             order_args = OrderArgs(
                 token_id=pos.token_id,
-                amount=pos.shares,  # SELL amount is in tokens
+                amount=sell_shares,  # SELL amount is in tokens
                 price=price,
                 side=SELL,
             )
@@ -311,7 +332,7 @@ class LiveTrader:
             action=TradeAction.SELL,
             price=price,
             size_usd=pos.size_usd,
-            shares=pos.shares,
+            shares=sell_shares,
             timestamp=time.time(),
             order_id=order_id,
             is_paper=False,
@@ -321,19 +342,11 @@ class LiveTrader:
 
     def execute_topup_and_sell(self, candidate: TopupCandidate, portfolio: Portfolio) -> Optional[Trade]:
         """Buy 5 tokens to reach CLOB minimum, then sell all tokens to exit stuck position."""
-        from py_clob_client.clob_types import OrderArgs, OrderType, BalanceAllowanceParams, AssetType
+        from py_clob_client.clob_types import OrderArgs, OrderType
         from py_clob_client.order_builder.constants import BUY, SELL
 
         pos = candidate.position
         price = pos.current_price
-
-        # Refresh CLOB's cached on-chain state for this conditional token.
-        try:
-            self.client.update_balance_allowance(
-                BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=pos.token_id, signature_type=-1)
-            )
-        except Exception as e:
-            log.debug(f"Conditional allowance update (pre-topup-sell): {e}")
 
         # Step 1: BUY 5 tokens to top up position
         buy_usd = candidate.topup_cost
@@ -382,8 +395,13 @@ class LiveTrader:
         # BUY filled — update position in portfolio
         portfolio.add_to_position(pos.condition_id, 5.0, buy_usd)
 
-        # Step 2: SELL all tokens (now >= 5)
+        # Step 2: SELL all tokens (now >= 5). Use actual on-chain balance to avoid
+        # "not enough balance" if earlier BUY was also partially filled.
+        actual_balance = self._get_actual_conditional_balance(pos.token_id)
         total_shares = pos.shares  # already updated by add_to_position
+        if actual_balance is not None and actual_balance < total_shares:
+            log.warning(f"Partial-fill detected in topup: portfolio={total_shares:.2f}, on-chain={actual_balance:.2f}; selling actual")
+            total_shares = actual_balance
         log.info(f"TOPUP SELL: {total_shares:.2f} tokens @ {price:.4f}")
 
         try:

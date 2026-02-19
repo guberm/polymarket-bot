@@ -294,6 +294,13 @@ def main():
 
                 trade = trader.execute_sell(es, portfolio)
                 if trade:
+                    # Re-sync bankroll from on-chain USDC after sell to correct
+                    # partial-fill accounting drift.
+                    if isinstance(trader, LiveTrader):
+                        sell_bal = trader.get_balance()
+                        if sell_bal is not None:
+                            portfolio.sync_balance(sell_bal)
+                            log.info(f"On-chain USDC after sell: ${sell_bal:.2f}")
                     append_trade(trade, config.data_dir)
                     save_snapshot(portfolio.snapshot(), config.data_dir)
                     exits_this_cycle += 1
@@ -492,11 +499,11 @@ def main():
                     if con:
                         print(f"[{ts()}]   [{i:>2}/{len(eligible)}] {GREEN}TRADE OK{RESET} (EV=${signal_obj.expected_value:.2f})")
 
-                    # Log on-chain USDC balance after trade (diagnostic only;
-                    # internal bookkeeping is authoritative when positions are open)
+                    # Re-sync bankroll from on-chain USDC after each trade.
                     if isinstance(trader, LiveTrader):
                         bal = trader.get_balance()
                         if bal is not None:
+                            portfolio.sync_balance(bal)
                             log.info(f"On-chain USDC after trade: ${bal:.2f}")
                             if con:
                                 print(f"[{ts()}]   USDC balance: ${bal:.2f}")

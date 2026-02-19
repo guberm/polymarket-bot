@@ -298,10 +298,17 @@ public sealed class ClobApiClient
     public async Task<OrderResult?> PostMarketSellOrderAsync(
         string tokenId, double shares, double price, CancellationToken ct)
     {
-        // Refresh CLOB's cached on-chain state for this conditional token.
-        // Without this, the CLOB may have a stale/zero allowance and reject the SELL
-        // with "not enough balance / allowance" even when the wallet holds the tokens.
-        await UpdateConditionalAllowanceAsync(tokenId, ct);
+        // Refresh CLOB cache and get actual on-chain token balance.
+        // GTC BUY orders can partially fill — the portfolio may record more shares
+        // than actually settled on-chain (e.g. 17.29 recorded but only 7.29 on-chain).
+        // Use the actual balance to avoid "not enough balance / allowance" errors.
+        var actualBalance = await GetActualConditionalBalanceAsync(tokenId, ct);
+        if (actualBalance.HasValue && actualBalance.Value < shares)
+        {
+            _log.LogWarning("Partial-fill detected: portfolio={Portfolio:F2} tokens, on-chain={OnChain:F2}; selling actual amount",
+                shares, actualBalance.Value);
+            shares = actualBalance.Value;
+        }
 
         var tickSize = await GetTickSizeAsync(tokenId, ct);
         var negRisk = await GetNegRiskAsync(tokenId, ct);
@@ -494,24 +501,54 @@ public sealed class ClobApiClient
     /// actually hold the tokens and they are approved for the exchange.
     /// Calls GET /balance-allowance/update?asset_type=CONDITIONAL&amp;token_id=...
     /// </summary>
-    public async Task UpdateConditionalAllowanceAsync(string tokenId, CancellationToken ct)
+    /// <summary>
+    /// Refresh CLOB's cached on-chain state for a conditional token, then read the
+    /// actual token balance. Returns the actual number of tokens held (in whole tokens),
+    /// or null if the query fails. Used to detect partial-fill discrepancies before SELL.
+    /// </summary>
+    public async Task<double?> GetActualConditionalBalanceAsync(string tokenId, CancellationToken ct)
     {
         try
         {
-            var path = "/balance-allowance/update";
-            var url = $"{_host}{path}?asset_type=CONDITIONAL&token_id={tokenId}&signature_type={_signatureType}";
-            var l2Headers = BuildL2Headers("GET", path);
-            var req = new HttpRequestMessage(HttpMethod.Get, url);
-            foreach (var h in l2Headers) req.Headers.TryAddWithoutValidation(h.Key, h.Value);
+            // Step 1: GET /balance-allowance/update to refresh CLOB cache from chain
+            var updatePath = "/balance-allowance/update";
+            var updateUrl = $"{_host}{updatePath}?asset_type=CONDITIONAL&token_id={tokenId}&signature_type={_signatureType}";
+            var updateHeaders = BuildL2Headers("GET", updatePath);
+            var updateReq = new HttpRequestMessage(HttpMethod.Get, updateUrl);
+            foreach (var h in updateHeaders) updateReq.Headers.TryAddWithoutValidation(h.Key, h.Value);
+            var updateResp = await _http.SendAsync(updateReq, ct);
+            if (!updateResp.IsSuccessStatusCode)
+            {
+                var updateBody = await updateResp.Content.ReadAsStringAsync(ct);
+                _log.LogWarning("[COND-UPDATE] {Token} failed {Status}: {Body}", tokenId[..12], updateResp.StatusCode, updateBody[..Math.Min(updateBody.Length, 200)]);
+            }
 
-            var resp = await _http.SendAsync(req, ct);
-            var body = await resp.Content.ReadAsStringAsync(ct);
-            _log.LogDebug("Conditional allowance update ({Token}): {Status} {Body}",
-                tokenId[..12], resp.StatusCode, body[..Math.Min(body.Length, 200)]);
+            // Step 2: GET /balance-allowance to read actual conditional token balance
+            var readPath = "/balance-allowance";
+            var readUrl = $"{_host}{readPath}?asset_type=CONDITIONAL&token_id={tokenId}&signature_type={_signatureType}";
+            var readHeaders = BuildL2Headers("GET", readPath);
+            var readReq = new HttpRequestMessage(HttpMethod.Get, readUrl);
+            foreach (var h in readHeaders) readReq.Headers.TryAddWithoutValidation(h.Key, h.Value);
+            var readResp = await _http.SendAsync(readReq, ct);
+            var readBody = await readResp.Content.ReadAsStringAsync(ct);
+
+            // Balance is in 6-decimal units (same as USDC), e.g. "7290000" = 7.29 tokens
+            var doc = JsonDocument.Parse(readBody);
+            if (doc.RootElement.TryGetProperty("balance", out var balEl) &&
+                long.TryParse(balEl.GetString(), out var balRaw))
+            {
+                double balance = balRaw / 1_000_000.0;
+                _log.LogInformation("[COND-BALANCE] {Token}: {Balance:F2} tokens on-chain", tokenId[..12], balance);
+                return balance;
+            }
+
+            _log.LogWarning("[COND-BALANCE] {Token}: could not parse balance from: {Body}", tokenId[..12], readBody[..Math.Min(readBody.Length, 200)]);
+            return null;
         }
         catch (Exception ex)
         {
-            _log.LogDebug("Conditional allowance update error: {Error}", ex.Message);
+            _log.LogWarning("[COND-BALANCE] error for {Token}: {Error}", tokenId[..12], ex.Message);
+            return null;
         }
     }
 

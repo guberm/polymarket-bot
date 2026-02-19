@@ -358,6 +358,19 @@ while (!cts.Token.IsCancellationRequested)
             var sellTrade = await trader.ExecuteSellAsync(es, portfolio, cts.Token);
             if (sellTrade is not null)
             {
+                // Re-sync on-chain USDC balance after sell to correct any partial-fill
+                // accounting drift (portfolio may have credited more than was actually received).
+                if (trader is LiveTrader ltSell)
+                {
+                    var sellBal = await ltSell.GetBalanceAsync(cts.Token);
+                    if (sellBal is not null)
+                    {
+                        portfolio.SyncBalance(sellBal.Value);
+                        log.LogInformation("On-chain USDC after sell: ${Balance:F2}", sellBal.Value);
+                        Con($"    USDC after sell: ${sellBal.Value:F2}");
+                    }
+                }
+
                 PersistenceService.AppendTrade(sellTrade, config.DataDir);
                 PersistenceService.SaveSnapshot(portfolio.Snapshot(), config.DataDir);
                 exitsThisCycle++;
@@ -405,6 +418,16 @@ while (!cts.Token.IsCancellationRequested)
             var topupTrade = await trader.ExecuteTopupAndSellAsync(tc, portfolio, cts.Token);
             if (topupTrade is not null)
             {
+                if (trader is LiveTrader ltTopup)
+                {
+                    var topupBal = await ltTopup.GetBalanceAsync(cts.Token);
+                    if (topupBal is not null)
+                    {
+                        portfolio.SyncBalance(topupBal.Value);
+                        log.LogInformation("On-chain USDC after topup+sell: ${Balance:F2}", topupBal.Value);
+                    }
+                }
+
                 PersistenceService.AppendTrade(topupTrade, config.DataDir);
                 PersistenceService.SaveSnapshot(portfolio.Snapshot(), config.DataDir);
                 exitsThisCycle++;
@@ -555,13 +578,14 @@ while (!cts.Token.IsCancellationRequested)
             var trade = await trader.ExecuteAsync(signal, portfolio, cts.Token);
             if (trade is not null)
             {
-                // Log on-chain USDC balance after trade (diagnostic only;
-                // internal bookkeeping is authoritative when positions are open)
+                // Re-sync bankroll from on-chain USDC after each trade to prevent
+                // stale estimates causing "not enough balance" on subsequent trades.
                 if (trader is LiveTrader lt)
                 {
                     var bal = await lt.GetBalanceAsync(cts.Token);
                     if (bal is not null)
                     {
+                        portfolio.SyncBalance(bal.Value);
                         log.LogInformation("On-chain USDC after trade: ${Balance:F2}", bal.Value);
                         Con($"  USDC balance: ${bal.Value:F2}");
                     }
