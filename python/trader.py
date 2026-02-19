@@ -236,11 +236,20 @@ class LiveTrader:
         )
 
     def execute_sell(self, exit_signal: ExitSignal, portfolio: Portfolio) -> Optional[Trade]:
-        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client.clob_types import OrderArgs, OrderType, BalanceAllowanceParams, AssetType
         from py_clob_client.order_builder.constants import SELL
 
         pos = exit_signal.position
         price = exit_signal.current_price
+
+        # Refresh CLOB's cached on-chain state for this conditional token.
+        # Without this, the CLOB may have a stale/zero allowance and reject the SELL.
+        try:
+            self.client.update_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=pos.token_id, signature_type=-1)
+            )
+        except Exception as e:
+            log.debug(f"Conditional allowance update (pre-sell): {e}")
 
         if price < 0.01:
             log.warning(f"SKIP SELL (price {price:.4f} too low for CLOB): {pos.question[:40]}")
@@ -312,11 +321,19 @@ class LiveTrader:
 
     def execute_topup_and_sell(self, candidate: TopupCandidate, portfolio: Portfolio) -> Optional[Trade]:
         """Buy 5 tokens to reach CLOB minimum, then sell all tokens to exit stuck position."""
-        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client.clob_types import OrderArgs, OrderType, BalanceAllowanceParams, AssetType
         from py_clob_client.order_builder.constants import BUY, SELL
 
         pos = candidate.position
         price = pos.current_price
+
+        # Refresh CLOB's cached on-chain state for this conditional token.
+        try:
+            self.client.update_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=pos.token_id, signature_type=-1)
+            )
+        except Exception as e:
+            log.debug(f"Conditional allowance update (pre-topup-sell): {e}")
 
         # Step 1: BUY 5 tokens to top up position
         buy_usd = candidate.topup_cost
