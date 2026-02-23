@@ -50,7 +50,7 @@ class BotConfig:
     # Sizing
     kelly_fraction: float = 0.25
     min_edge: float = 0.08  # 8 percentage points
-    min_trade_usd: float = 1.0
+    min_trade_usd: float = 0.5
 
     # Risk
     max_position_pct: float = 0.15  # Max 15% of bankroll per position
@@ -137,7 +137,7 @@ class BotConfig:
             ensemble_temperature=get("ensemble_temperature", 0.7),
             kelly_fraction=get("kelly_fraction", 0.25),
             min_edge=get("min_edge", 0.08),
-            min_trade_usd=get("min_trade_usd", 1.0),
+            min_trade_usd=get("min_trade_usd", 0.5),
             enable_position_review=get("enable_position_review", True),
             position_stop_loss_pct=get("position_stop_loss_pct", 0.30),
             take_profit_price=get("take_profit_price", 0.95),

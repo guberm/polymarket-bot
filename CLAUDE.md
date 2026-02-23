@@ -127,7 +127,7 @@ dotnet/PolymarketBot/
 - **Estimator prompt** asks Claude to output `{"probability": 0.XX, "reasoning": "..."}` — does NOT show current market price to avoid anchoring
 - **Keyword-based categorization** (`CATEGORY_KEYWORDS` in scanner) — used for per-category exposure limits
 - **Gamma API returns JSON-encoded strings** inside JSON for `outcomes`, `outcomePrices`, and `clobTokenIds` — parsing handles both string and list forms
-- **Risk is layered:** per-position (15%), per-category (50%), total exposure (90%), daily stop-loss (20%), max drawdown (50%)
+- **Risk is layered:** per-position (15%), per-category (80%), total exposure (100%), daily stop-loss (20%), max drawdown (50%)
 - **Portfolio value** for stop-loss/drawdown = bankroll + total open position value (deployed capital isn't a loss)
 - **Config file** `polymarket_bot_config.json` at project root (not tracked by git). Loaded by both Python (`Path(__file__).parent.parent / "polymarket_bot_config.json"`) and .NET (`../../polymarket_bot_config.json` relative to CWD). `CONFIG_FILE` env var overrides path. Priority: CLI arg → env var → config file → code default
 - **Email notifications** — `Notifier` class (python/notifier.py, dotnet/.../Notifier.cs) sends emails on: started, trade, sell, topup+sell, resolved, halted, daily_reset, error, stopped. Errors silently swallowed — email failure never crashes bot. Use STARTTLS (port 587) or SMTP_SSL (port 465) based on `email_use_tls`
@@ -140,6 +140,7 @@ dotnet/PolymarketBot/
 - **Top-up-and-sell** for tiny positions (<5 tokens) with exit signals: BUY 5 tokens (CLOB minimum) then SELL all. If BUY fills but SELL doesn't, position becomes sellable next cycle. Skipped if bankroll < topup cost
 - **SELL orders** use Side=1, makerAmount=tokens, takerAmount=USDC (reversed from BUY). Minimum 5 tokens enforced
 - **Agent survival**: estimation loop stops when bankroll < $0.30 (API reserve guard) — bot keeps running for position review. Agent truly "dead" only when `bankroll + TotalExposure() < $1`. `IsHalted` is auto-cleared on restart if portfolio value is healthy (transient low-USDC halts don't persist)
+- **Scan skip threshold** = `max(MinTradeUsd, MaxPositionPct × bankroll)` — based on free cash only, not portfolio value, to avoid false blocks when most capital is locked in positions. Default `MinTradeUsd = $0.50` (≈ CLOB minimum: 5 tokens)
 - **.NET version** uses direct HttpClient calls to Anthropic REST API (no SDK dependency)
 - **.NET CLOB auth** implements EIP-712 signing (ClobAuth struct for L1, Order struct for orders) + HMAC-SHA256 for L2, using Nethereum.Signer for Keccak/ECDSA
 - **No hardcoded URLs or contract addresses** — all endpoints/contracts come from env vars

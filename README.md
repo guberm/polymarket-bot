@@ -135,7 +135,7 @@ Config priority (highest wins): **CLI arg → env var → config file → code d
 | `daily_stop_loss_pct` | `0.20` | Halt if daily loss exceeds 20% |
 | `max_drawdown_pct` | `0.50` | Halt if drawdown exceeds 50% |
 | `max_concurrent_positions` | `20` | Max open positions |
-| `min_trade_usd` | `1.0` | Minimum trade size in USD |
+| `min_trade_usd` | `0.5` | Minimum trade size in USD |
 | `enable_position_review` | `true` | Review positions for exits each cycle |
 | `position_stop_loss_pct` | `0.30` | Sell if position drops > 30% |
 | `take_profit_price` | `0.95` | Sell if price reaches 0.95+ |
@@ -277,7 +277,7 @@ Daily stop-loss and drawdown are calculated against **portfolio value** (bankrol
 
 API costs (Claude inference) are deducted from the bankroll every cycle. The agent must generate enough edge to cover its own operating costs.
 
-To avoid spending the last USDC on API calls when no trades are possible, the estimation loop stops early if `bankroll < $0.30`. The bot also skips the Gamma API scan entirely if the bankroll is too low to fund the smallest possible position — saving ~15s per cycle. The bot continues running (monitoring positions, waiting for exits) and resumes full operation once USDC returns from resolved/exited positions.
+To avoid spending the last USDC on API calls when no trades are possible, the estimation loop stops early if `bankroll < $0.30`. The bot also skips the Gamma API scan entirely if the bankroll is too low to fund the smallest possible position — saving ~15s per cycle. The scan threshold is `max(min_trade_usd, max_position_pct × bankroll)`, so the threshold scales with free cash rather than total portfolio value (avoiding false blocks when most capital is locked in open positions). The bot continues running (monitoring positions, waiting for exits) and resumes full operation once USDC returns from resolved/exited positions.
 
 The agent truly halts only when total portfolio value (`bankroll + open position value`) drops below $1. This prevents false halts when capital is deployed in positions but free USDC is temporarily low. A stale halt flag from a previous session is automatically cleared on restart if the portfolio is still healthy.
 

@@ -447,8 +447,7 @@ while (!cts.Token.IsCancellationRequested)
     {
         // Skip market scan entirely if bankroll can't fund the smallest possible
         // trade. Saves the ~15s Gamma API call when no trade is possible.
-        var pvPre = portfolio.Bankroll + portfolio.TotalExposure();
-        var minPosPre = config.MaxPositionPct * pvPre * 0.5;
+        var minPosPre = config.MaxPositionPct * portfolio.Bankroll;
         var minRequired = Math.Max(minPosPre, config.MinTradeUsd);
         var tradesThisCycle = 0;
 

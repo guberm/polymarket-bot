@@ -370,8 +370,7 @@ def main():
         try:
             # Skip scan entirely if bankroll can't fund the smallest possible trade.
             # Saves ~10s Gamma API call when no trade is possible.
-            pv_pre = portfolio.bankroll + portfolio.total_exposure()
-            min_pos_pre = config.max_position_pct * pv_pre * 0.5
+            min_pos_pre = config.max_position_pct * portfolio.bankroll
             min_required = max(min_pos_pre, config.min_trade_usd)
             trades_this_cycle = 0
 

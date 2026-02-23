@@ -32,7 +32,7 @@ public sealed class BotConfig
     // Sizing
     public double KellyFraction { get; init; } = 0.25;
     public double MinEdge { get; init; } = 0.08;
-    public double MinTradeUsd { get; init; } = 1.0;
+    public double MinTradeUsd { get; init; } = 0.5;
 
     // Risk
     public double MaxPositionPct { get; set; } = 0.15;
@@ -111,7 +111,7 @@ public sealed class BotConfig
             EnsembleTemperature = double.Parse(Cfg("ensemble_temperature", "ENSEMBLE_TEMPERATURE", "0.7")),
             KellyFraction = double.Parse(Cfg("kelly_fraction", "KELLY_FRACTION", "0.25")),
             MinEdge = double.Parse(Cfg("min_edge", "MIN_EDGE", "0.08")),
-            MinTradeUsd = double.Parse(Cfg("min_trade_usd", "MIN_TRADE_USD", "1.0")),
+            MinTradeUsd = double.Parse(Cfg("min_trade_usd", "MIN_TRADE_USD", "0.5")),
             EnablePositionReview = Cfg("enable_position_review", "ENABLE_POSITION_REVIEW", "true").Equals("true", StringComparison.OrdinalIgnoreCase),
             PositionStopLossPct = double.Parse(Cfg("position_stop_loss_pct", "POSITION_STOP_LOSS_PCT", "0.30")),
             TakeProfitPrice = double.Parse(Cfg("take_profit_price", "TAKE_PROFIT_PRICE", "0.95")),
