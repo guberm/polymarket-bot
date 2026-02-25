@@ -93,10 +93,10 @@ dotnet/PolymarketBot/
   Models/                  – Enums, MarketInfo, Estimate, Signal, Position, Trade, TopupCandidate, PortfolioSnapshot
   Services/
     MarketScanner.cs       – Gamma API with HttpClient, pagination, filtering, batch price fetch
-    Estimator.cs           – Claude ensemble via Anthropic REST API (HttpClient)
+    Estimator.cs           – Claude ensemble via Anthropic REST API (HttpClient); 429/529 retry with 10/20/40s backoff
     Portfolio.cs           – Kelly sizing, 5-layer risk, position review & exit signals, API cost tracking
     Notifier.cs            – Email notifications (System.Net.Mail); mirrors python/notifier.py
-    ClobApiClient.cs       – CLOB API auth (EIP-712 signing, HMAC, API key derivation), buy & sell orders
+    ClobApiClient.cs       – CLOB API auth (EIP-712 signing, HMAC, API key derivation), buy & sell orders, auto-claim (CTF.redeemPositions on Polygon)
     ITrader.cs             – Trader interface (ExecuteAsync + ExecuteSellAsync + ExecuteTopupAndSellAsync)
     PaperTrader.cs         – Simulated execution (buy & sell)
     LiveTrader.cs          – Live CLOB API execution with GTC polling (buy & sell)
@@ -144,3 +144,6 @@ dotnet/PolymarketBot/
 - **.NET version** uses direct HttpClient calls to Anthropic REST API (no SDK dependency)
 - **.NET CLOB auth** implements EIP-712 signing (ClobAuth struct for L1, Order struct for orders) + HMAC-SHA256 for L2, using Nethereum.Signer for Keccak/ECDSA
 - **No hardcoded URLs or contract addresses** — all endpoints/contracts come from env vars
+- **Auto-claim** (.NET only) — when a WON position is detected in the position review loop, `ClobApiClient.RedeemWinningPositionAsync()` submits a raw EIP-155 transaction to Polygon calling `CTF.redeemPositions(collateral, parentCollectionId, conditionId, indexSets)`. Calldata is ABI-encoded manually (196 bytes). Signing reuses existing `EthECKey` + Keccak — no new NuGet packages. Requires `ctf_address`, `usdc_address`, `polygon_rpc_url` in config. Controlled by `auto_claim` (default `true`)
+- **Anthropic 429/529 retry** — `Estimator.SingleCallAsync` retries up to 3 times on rate-limit (429) or overload (529) errors, with exponential backoff 10s → 20s → 40s. After max retries returns null (market skipped)
+- **SKIP log clarity** — `Program.cs` distinguishes two null-signal reasons: "SKIP (bankroll < min)" when edge IS sufficient but position size is below CLOB minimum (5 tokens), vs "SKIP (no edge)" when edge is genuinely below threshold. Console shows "TOO SMALL: need $X, have $Y" in the former case

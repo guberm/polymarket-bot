@@ -32,6 +32,9 @@ polymarket_bot_config.json
 
 # Claude Code
 .claude/
+CLAUDE.md.tmp
+tmpclaud*
+*.tmpclaud*
 
 # OS
 Thumbs.db

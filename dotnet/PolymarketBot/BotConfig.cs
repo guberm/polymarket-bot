@@ -72,6 +72,12 @@ public sealed class BotConfig
     public string ExchangeAddress { get; init; } = "";
     public string NegRiskExchangeAddress { get; init; } = "";
 
+    // Auto-claim: send CTF.redeemPositions on-chain when a winning position resolves
+    public bool AutoClaim { get; init; } = true;
+    public string PolygonRpcUrl { get; init; } = "https://polygon-rpc.com";
+    public string CtfAddress { get; init; } = "";
+    public string UsdcAddress { get; init; } = "";
+
     // Email notifications
     public bool EmailEnabled { get; init; }
     public string EmailSmtpHost { get; init; } = "";
@@ -138,6 +144,10 @@ public sealed class BotConfig
             ClobHost = Cfg("clob_host", "CLOB_HOST", ""),
             ExchangeAddress = Cfg("exchange_address", "EXCHANGE_ADDRESS", ""),
             NegRiskExchangeAddress = Cfg("neg_risk_exchange_address", "NEG_RISK_EXCHANGE_ADDRESS", ""),
+            AutoClaim = Cfg("auto_claim", "AUTO_CLAIM", "true").Equals("true", StringComparison.OrdinalIgnoreCase),
+            PolygonRpcUrl = Cfg("polygon_rpc_url", "POLYGON_RPC_URL", "https://polygon-rpc.com"),
+            CtfAddress = Cfg("ctf_address", "CTF_ADDRESS", ""),
+            UsdcAddress = Cfg("usdc_address", "USDC_ADDRESS", ""),
             EmailEnabled = Cfg("email_enabled", "EMAIL_ENABLED", "false").Equals("true", StringComparison.OrdinalIgnoreCase),
             EmailSmtpHost = Cfg("email_smtp_host", "EMAIL_SMTP_HOST", ""),
             EmailSmtpPort = int.Parse(Cfg("email_smtp_port", "EMAIL_SMTP_PORT", "587")),

@@ -58,6 +58,12 @@ public sealed class ClobApiClient
     private string _apiSecret = "";
     private string _apiPassphrase = "";
 
+    // Auto-claim: Polygon RPC + CTF contract
+    private readonly string _privateKey;
+    private readonly string _polygonRpcUrl;
+    private readonly string _ctfAddress;
+    private readonly string _usdcAddress;
+
     public string ApiKey => _apiKey;
     public bool IsInitialized => !string.IsNullOrEmpty(_apiKey);
 
@@ -78,6 +84,11 @@ public sealed class ClobApiClient
         _authDomainSep = ComputeAuthDomainSeparator(_chainId);
         _exchangeDomainSep = ComputeExchangeDomainSeparator(_chainId, config.ExchangeAddress);
         _negRiskExchangeDomainSep = ComputeExchangeDomainSeparator(_chainId, config.NegRiskExchangeAddress);
+
+        _privateKey = config.PolymarketPrivateKey;
+        _polygonRpcUrl = config.PolygonRpcUrl;
+        _ctfAddress = config.CtfAddress;
+        _usdcAddress = config.UsdcAddress;
 
         // Use pre-configured creds if available
         if (!string.IsNullOrEmpty(config.PolymarketApiKey) &&
@@ -868,6 +879,247 @@ public sealed class ClobApiClient
     {
         WriteIndented = false,
     };
+
+    // ── Auto-claim ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Calls CTF.redeemPositions on Polygon for a winning position.
+    /// Returns the transaction hash on success, null on any failure (never throws).
+    /// Requires ctf_address, usdc_address, and polygon_rpc_url in config.
+    /// </summary>
+    public async Task<string?> RedeemWinningPositionAsync(
+        string conditionId, string side, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(_ctfAddress) ||
+            string.IsNullOrEmpty(_usdcAddress) ||
+            string.IsNullOrEmpty(_polygonRpcUrl))
+        {
+            _log.LogWarning(
+                "Auto-claim skipped — ctf_address / usdc_address / polygon_rpc_url not configured");
+            return null;
+        }
+
+        try
+        {
+            // YES token = outcome slot 0 → indexSet 1 (bit 0)
+            // NO token  = outcome slot 1 → indexSet 2 (bit 1)
+            var indexSet = side.Equals("YES", StringComparison.OrdinalIgnoreCase) ? 1 : 2;
+            var callData = BuildRedeemCallData(conditionId, indexSet);
+
+            // Fetch nonce
+            var nonceHex = await PolygonRpcCallAsync<string>(
+                "eth_getTransactionCount", new object[] { _signerAddress, "latest" }, ct);
+            var nonce = BigInteger.Parse(
+                nonceHex.TrimStart('0').Length == 0 ? "0" :
+                nonceHex.StartsWith("0x") ? nonceHex[2..] : nonceHex,
+                NumberStyles.HexNumber);
+
+            // Fetch gas price + add 20 % buffer
+            var gasPriceHex = await PolygonRpcCallAsync<string>(
+                "eth_gasPrice", Array.Empty<object>(), ct);
+            var gasPrice = BigInteger.Parse(
+                gasPriceHex.StartsWith("0x") ? gasPriceHex[2..] : gasPriceHex,
+                NumberStyles.HexNumber);
+            gasPrice = gasPrice * 12 / 10;
+
+            var gasLimit = new BigInteger(200_000);
+
+            // Sign EIP-155 legacy transaction and RLP-encode
+            var signedTxBytes = BuildSignedEip155Transaction(
+                new BigInteger(_chainId), _ctfAddress, BigInteger.Zero,
+                nonce, gasPrice, gasLimit, callData);
+            var signedTxHex = "0x" + Convert.ToHexString(signedTxBytes).ToLowerInvariant();
+
+            // Broadcast
+            var txHash = await PolygonRpcCallAsync<string>(
+                "eth_sendRawTransaction", new object[] { signedTxHex }, ct);
+
+            _log.LogInformation("Auto-claim submitted: {TxHash}", txHash);
+            return txHash;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning("Auto-claim failed: {Message}", ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// ABI-encodes the calldata for:
+    ///   CTF.redeemPositions(address collateral, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets)
+    /// </summary>
+    private byte[] BuildRedeemCallData(string conditionId, int indexSet)
+    {
+        // selector = keccak256("redeemPositions(address,bytes32,bytes32,uint256[])")[:4]
+        var selector = Keccak(Encoding.UTF8.GetBytes(
+            "redeemPositions(address,bytes32,bytes32,uint256[])")).Take(4).ToArray();
+
+        // Layout (offsets relative to start of encoded args, not including selector):
+        //  [0]  address collateral           32 bytes
+        //  [32] bytes32 parentCollectionId   32 bytes (zeros)
+        //  [64] bytes32 conditionId          32 bytes
+        //  [96] uint256 offset→array         32 bytes  = 0x80 (128)
+        //  [128] uint256 array.length        32 bytes  = 1
+        //  [160] uint256 array[0]            32 bytes  = indexSet
+        //  Total args = 6 * 32 = 192 bytes
+        var data = new byte[4 + 6 * 32];
+        Array.Copy(selector, 0, data, 0, 4);
+
+        // arg0: collateral (USDC address)
+        Array.Copy(AbiEncodeAddress(_usdcAddress), 0, data, 4, 32);
+
+        // arg1: parentCollectionId = bytes32(0)   — already zero-initialised
+
+        // arg2: conditionId bytes32
+        var condStr = conditionId.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+            ? conditionId[2..] : conditionId;
+        var condBytes = HexToBytes(condStr);
+        // bytes32 is right-padded in ABI for fixed-size byte arrays
+        Array.Copy(condBytes, 0, data, 4 + 64, Math.Min(condBytes.Length, 32));
+
+        // arg3: offset to the dynamic array = 128 (0x80)
+        Array.Copy(AbiEncodeUint256(128), 0, data, 4 + 96, 32);
+
+        // array length = 1
+        Array.Copy(AbiEncodeUint256(1), 0, data, 4 + 128, 32);
+
+        // array[0] = indexSet
+        Array.Copy(AbiEncodeUint256(indexSet), 0, data, 4 + 160, 32);
+
+        return data;
+    }
+
+    /// <summary>Minimal JSON-RPC 2.0 call to a Polygon (or any EVM) node.</summary>
+    private async Task<T> PolygonRpcCallAsync<T>(
+        string method, object[] @params, CancellationToken ct)
+    {
+        var requestJson = JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            method,
+            @params,
+            id = 1,
+        }, _jsonOpts);
+
+        using var response = await _http.PostAsync(
+            _polygonRpcUrl,
+            new StringContent(requestJson, Encoding.UTF8, "application/json"),
+            ct);
+        response.EnsureSuccessStatusCode();
+
+        var body = await response.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(body);
+
+        if (doc.RootElement.TryGetProperty("error", out var errEl))
+            throw new InvalidOperationException($"RPC error: {errEl.GetRawText()}");
+
+        var result = doc.RootElement.GetProperty("result");
+        return JsonSerializer.Deserialize<T>(result.GetRawText(), _jsonOpts)
+               ?? throw new InvalidOperationException("Null RPC result");
+    }
+
+    // ── EIP-155 transaction signing (no external dependency) ────────
+
+    /// <summary>
+    /// Signs and RLP-encodes a legacy (type-0) EIP-155 transaction.
+    /// Compatible with Polygon (chain ID 137).
+    /// </summary>
+    private byte[] BuildSignedEip155Transaction(
+        BigInteger chainId, string to, BigInteger value,
+        BigInteger nonce, BigInteger gasPrice, BigInteger gasLimit,
+        byte[] data)
+    {
+        // Step 1: RLP-encode unsigned tx for hashing (EIP-155 includes chainId, 0, 0)
+        var rlpUnsigned = RlpList(
+            RlpInt(nonce),
+            RlpInt(gasPrice),
+            RlpInt(gasLimit),
+            RlpAddr(to),
+            RlpInt(value),
+            RlpRaw(data),
+            RlpInt(chainId),
+            RlpInt(BigInteger.Zero),
+            RlpInt(BigInteger.Zero));
+
+        // Step 2: Hash + ECDSA sign
+        var hash = Keccak(rlpUnsigned);
+        var sig = _ecKey.SignAndCalculateV(hash);
+
+        // sig.V[0] is recovery bit (0 or 1); some Nethereum builds return 27/28
+        var recovery = sig.V[0] >= 27 ? sig.V[0] - 27 : sig.V[0];
+        var v = chainId * 2 + 35 + recovery;
+
+        // Step 3: RLP-encode signed tx
+        return RlpList(
+            RlpInt(nonce),
+            RlpInt(gasPrice),
+            RlpInt(gasLimit),
+            RlpAddr(to),
+            RlpInt(value),
+            RlpRaw(data),
+            RlpInt(v),
+            RlpSigBytes(sig.R),
+            RlpSigBytes(sig.S));
+    }
+
+    // Minimal RLP encoding helpers
+    private static byte[] RlpInt(BigInteger value)
+    {
+        if (value == 0) return Array.Empty<byte>();
+        return value.ToByteArray(isBigEndian: true, isUnsigned: true);
+    }
+
+    private static byte[] RlpAddr(string hexAddr)
+    {
+        var s = hexAddr.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+            ? hexAddr[2..] : hexAddr;
+        return HexToBytes(s.PadLeft(40, '0'));
+    }
+
+    private static byte[] RlpRaw(byte[] data) => data;
+
+    private static byte[] RlpSigBytes(byte[] bytes)
+    {
+        // Strip leading zeros (minimal encoding), keep at least 1 byte
+        int start = 0;
+        while (start < bytes.Length - 1 && bytes[start] == 0) start++;
+        return bytes[start..];
+    }
+
+    private static byte[] RlpList(params byte[][] items)
+    {
+        // Encode each item as an RLP string, then wrap in a list header
+        var encodedItems = items.Select(RlpString).SelectMany(x => x).ToArray();
+        return RlpListHeader(encodedItems.Length).Concat(encodedItems).ToArray();
+    }
+
+    private static byte[] RlpString(byte[] data)
+    {
+        if (data.Length == 0) return new byte[] { 0x80 };
+        if (data.Length == 1 && data[0] < 0x80) return data;
+        return RlpStringHeader(data.Length).Concat(data).ToArray();
+    }
+
+    private static byte[] RlpStringHeader(int len)
+    {
+        if (len <= 55) return new[] { (byte)(0x80 + len) };
+        var lb = RlpLenBytes(len);
+        return new[] { (byte)(0xb7 + lb.Length) }.Concat(lb).ToArray();
+    }
+
+    private static byte[] RlpListHeader(int len)
+    {
+        if (len <= 55) return new[] { (byte)(0xc0 + len) };
+        var lb = RlpLenBytes(len);
+        return new[] { (byte)(0xf7 + lb.Length) }.Concat(lb).ToArray();
+    }
+
+    private static byte[] RlpLenBytes(int value)
+    {
+        var result = new List<byte>();
+        while (value > 0) { result.Insert(0, (byte)(value & 0xff)); value >>= 8; }
+        return result.ToArray();
+    }
 
     // ── Internal types ──────────────────────────────────────────────
 

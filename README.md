@@ -96,6 +96,21 @@ Set these fields in `polymarket_bot_config.json`:
 
 Requires a funded Polymarket wallet on Polygon (chain ID 137). For Gnosis Safe wallets, set `"polymarket_signature_type": 1`.
 
+### Auto-claim (optional, .NET only)
+
+When a position resolves WON, the bot can automatically submit the on-chain `CTF.redeemPositions` transaction so USDC returns to your wallet without manual intervention:
+
+```json
+{
+  "auto_claim": true,
+  "ctf_address":    "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
+  "usdc_address":   "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+  "polygon_rpc_url": "https://polygon-rpc.com"
+}
+```
+
+`auto_claim` defaults to `true` but does nothing unless `ctf_address` and `usdc_address` are set.
+
 ## CLI Arguments
 
 Risk parameters can be overridden at startup (override config file):
@@ -154,6 +169,10 @@ Config priority (highest wins): **CLI arg → env var → config file → code d
 | `email_user` | — | SMTP login / sender address |
 | `email_password` | — | SMTP password (use app password for Gmail) |
 | `email_to` | — | Recipient address |
+| `auto_claim` | `true` | Auto-submit on-chain redemption when a position resolves WON (.NET only) |
+| `polygon_rpc_url` | `https://polygon-rpc.com` | Polygon JSON-RPC endpoint for auto-claim |
+| `ctf_address` | — | CTF contract address (required for auto-claim) |
+| `usdc_address` | — | USDC contract address (required for auto-claim) |
 
 All keys can also be set as environment variables (uppercase, underscores). For example, `anthropic_api_key` → `ANTHROPIC_API_KEY`. Env vars take priority over the config file.
 

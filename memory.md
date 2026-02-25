@@ -4,47 +4,93 @@ Running notes between Claude Code sessions. Not a changelog — just current sta
 
 ---
 
-## Current State (as of 2026-02-22)
+## Current State (as of 2026-02-25)
 
 - **Mode:** LIVE on Polygon (chain ID 137)
-- **Wallet:** `0x6e1e4f95258f110d2498e3a2a0c9fed3375bd2d9`
-- **Bankroll:** ~$0.86 free USDC + ~$23 locked in 7 open positions
-- **Portfolio value:** ~$24
-- **Cycle count:** ~474+ (running continuously)
+- **Wallet:** see `polymarket_bot_config.json` (`polymarket_funder_address`)
+- **Bankroll:** ~$0.30 free USDC + ~$21.58 locked in 6 open positions
+- **Portfolio value:** ~$21.88
 - **Active implementation:** .NET (run via `run-bot.bat` or `dotnet run -- --console`)
 
-### Open Positions (~7 remaining)
+### Open Positions (~6 remaining)
 
-4 of the 7 are **penny positions** (price < $0.01) — effectively worthless, unsellable on CLOB, waiting for resolution. The other 3 have real value and will be reviewed for exits each cycle.
+Some are **penny positions** (price < $0.01) — effectively worthless, unsellable on CLOB, waiting for resolution.
 
-The Bitcoin/$75k February position was stop-loss sold in cycle ~474 after a 504 timeout on the prior cycle's attempt.
+Most recent trade: BUY YES "Will US or Israel strike Iran by Feb 28, 2026?" — $1.23 at $0.12/share (10.21 shares), 23.5% edge, filled on-chain.
+
+Bot is currently idle: `SCAN SKIP: bankroll $0.30 < min $0.50`. Waiting for a position to resolve or more USDC deposited before resuming.
 
 ---
 
-## Recent Fixes (this session)
+## Recent Fixes (2026-02-25 session)
 
-### Scan threshold inflation fix (2026-02-22)
+### 1. Scan threshold inflation fix
 
-**Problem:** With $0.86 free bankroll and $25 in locked positions, scan was blocked at `min ~$1.94`. The formula was `MaxPositionPct × (bankroll + exposure) × 0.5`, which inflates the threshold when most capital is locked.
+**Problem:** Bot was blocked from scanning with `EXPOSURE FULL: room=$1.52 < $1.64`. The formula used portfolio value (`MaxPositionPct × pv × 0.5`) which inflated the threshold when most capital was locked in positions.
 
-**Fix:** Changed formula to `max(MinTradeUsd, MaxPositionPct × bankroll)` — based on free cash only.
+**Fix:** Changed `Program.cs` threshold to `Math.Max(config.MinTradeUsd, config.MaxPositionPct * portfolio.Bankroll)` — based on free cash only.
 
-Also lowered `min_trade_usd` default from `$1.00` to `$0.50` everywhere:
-- `python/config.py` (dataclass default + config loader default)
-- `dotnet/PolymarketBot/BotConfig.cs` (config loader default)
-- `polymarket_bot_config.json` (line 32)
+**Files:** `dotnet/PolymarketBot/Program.cs`
 
-**Files changed:** `python/main.py`, `python/config.py`, `dotnet/PolymarketBot/Program.cs`, `dotnet/PolymarketBot/BotConfig.cs`, `polymarket_bot_config.json`
+---
 
-**Result:** With $0.86 bankroll, threshold is now `max($0.50, 0.15 × $0.86) = $0.50`. Bot scans normally. Scan ran, found 507 markets. Estimation skipped (correct — no room for new positions).
+### 2. Auto-claim: on-chain CTF.redeemPositions
+
+**Problem:** After a market resolves (WON), the user had to manually click "Claim" on polymarket.com. USDC wouldn't return to the wallet until claimed.
+
+**Implementation:**
+- `BotConfig.cs`: added `AutoClaim` (default `true`), `PolygonRpcUrl`, `CtfAddress`, `UsdcAddress`
+- `ClobApiClient.cs`: added `RedeemWinningPositionAsync()` — submits a raw EIP-155 transaction to Polygon calling `CTF.redeemPositions(collateral, parentCollectionId, conditionId, indexSets)`
+  - ABI-encodes calldata manually (196 bytes)
+  - Signs with existing `EthECKey` + `Keccak` (no new NuGet dependencies)
+  - Broadcasts via JSON-RPC 2.0 (`eth_sendRawTransaction`) to `polygon_rpc_url`
+- `Program.cs`: calls `RedeemWinningPositionAsync` in the Tier 0 position review loop when a WON position is detected
+
+**Config required** (`polymarket_bot_config.json`):
+```json
+"auto_claim": true,
+"ctf_address":    "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
+"usdc_address":   "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+"polygon_rpc_url": "https://polygon-rpc.com"
+```
+
+**Files:** `dotnet/PolymarketBot/BotConfig.cs`, `dotnet/PolymarketBot/Services/ClobApiClient.cs`, `dotnet/PolymarketBot/Program.cs`
+
+---
+
+### 3. Misleading "SKIP (no edge)" log message fixed
+
+**Problem:** `Portfolio.GenerateSignal()` returns null for two different reasons — edge below threshold AND position size below CLOB minimum (5 tokens). Both showed as "SKIP (no edge)" in the log even when edge was +48%.
+
+**Fix:**
+- `Program.cs`: after `GenerateSignal() == null`, checks `bestEdge > config.MinEdge` separately:
+  - If edge IS sufficient but size is too small → logs "SKIP (bankroll $X < min $Y)" and console "TOO SMALL: need $X, have $Y"
+  - If edge is genuinely below threshold → logs "SKIP (no edge)"
+- `Portfolio.cs`: upgraded CLOB minimum log from `LogDebug` → `LogInformation` so it appears in normal runs
+
+**Files:** `dotnet/PolymarketBot/Program.cs`, `dotnet/PolymarketBot/Services/Portfolio.cs`
+
+---
+
+### 4. Anthropic 529 retry with exponential backoff
+
+**Problem:** Anthropic 529 (overloaded) errors hit `EnsureSuccessStatusCode()` in the estimator, threw `HttpRequestException`, returned null immediately with no retry — causing entire market estimations to fail silently.
+
+**Fix:** Added retry loop in `Estimator.cs` (up to 3 attempts) for both 429 and 529:
+- Backoff: 10s → 20s → 40s
+- Warning log per attempt: "Anthropic 529 (attempt 1/3) — retrying in 10s"
+- After max retries: logs error and returns null
+
+**Files:** `dotnet/PolymarketBot/Services/Estimator.cs`
 
 ---
 
 ## Known Issues / Watchlist
 
-- **4 penny positions**: priced < $0.01, will never recover. They'll either resolve (returning some fraction) or expire worthless. No action needed.
-- **CLOB 504 timeouts on SELL**: Happens intermittently. No retry logic — the next cycle will re-attempt. The failed Bitcoin sell eventually succeeded on retry.
-- **Low free bankroll**: Bot won't open new positions until existing ones resolve/exit and USDC returns. Secondary "exposure near limit" check (`MaxPositionPct × portfolioValue × 0.5`) correctly blocks estimation when room is < minimum position size.
+- **Penny positions**: priced < $0.01, will never recover. They'll either resolve (returning some fraction) or expire worthless. No action needed — penny filter skips them correctly.
+- **Low free bankroll**: Bot won't open new positions until existing ones resolve/exit and USDC returns (or user deposits more).
+- **Auto-claim not yet tested in production**: Implemented and built successfully; will fire next time a WON position is detected. Requires `ctf_address` + `usdc_address` in config.
+- **Python implementation not updated**: The fixes above are .NET only. The Python version still has the old scan threshold logic and no auto-claim.
 
 ---
 
@@ -55,6 +101,7 @@ Also lowered `min_trade_usd` default from `$1.00` to `$0.50` everywhere:
 - Kelly sizing caps at `min(KellyFraction × Kelly%, MaxPositionPct × portfolioValue)`, then checked against `bankroll` (can't spend what you don't have)
 - Balance sync happens every cycle: on-chain USDC is fetched and bankroll is adjusted both up (resolved positions) and down (fees/failed orders)
 - `IsHalted` is cleared on restart if `bankroll + TotalExposure() > $1` — transient halts don't stick across restarts
+- Scan skip threshold = `max(MinTradeUsd, MaxPositionPct × bankroll)` — free cash only, not portfolio value
 
 ---
 
@@ -74,3 +121,5 @@ Also lowered `min_trade_usd` default from `$1.00` to `$0.50` everywhere:
 | `take_profit_price` | `0.95` |
 | `ensemble_size` | `5` |
 | `scan_interval_minutes` | `10` |
+| `auto_claim` | `true` |
+| `polygon_rpc_url` | `https://polygon-rpc.com` |

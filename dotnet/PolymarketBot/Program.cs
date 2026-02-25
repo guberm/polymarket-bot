@@ -158,6 +158,7 @@ var notifier = new Notifier(config, loggerFactory.CreateLogger<Notifier>());
 using var cts = new CancellationTokenSource();
 
 ITrader trader;
+ClobApiClient? clobClient = null;
 if (config.LiveTrading)
 {
     if (string.IsNullOrEmpty(config.PolymarketPrivateKey) && string.IsNullOrEmpty(config.PolymarketApiKey))
@@ -165,7 +166,7 @@ if (config.LiveTrading)
         log.LogError("POLYMARKET_PRIVATE_KEY or POLYMARKET_API_KEY required for live trading");
         return 1;
     }
-    var clobClient = new ClobApiClient(config, httpClient, loggerFactory.CreateLogger<ClobApiClient>());
+    clobClient = new ClobApiClient(config, httpClient, loggerFactory.CreateLogger<ClobApiClient>());
     await clobClient.InitializeAsync(cts.Token);
     Con("CLOB API credentials initialized");
     var liveTrader = new LiveTrader(clobClient, loggerFactory.CreateLogger<LiveTrader>());
@@ -274,6 +275,26 @@ while (!cts.Token.IsCancellationRequested)
             if (resolution is null) continue;
 
             var won = pos.Side.ToString() == resolution["winning_side"];
+
+            // Auto-claim winning positions on-chain.
+            // Never blocks resolution accounting — if the tx fails, balance sync
+            // on the next cycle will still pick up the USDC once claimed manually.
+            if (won && clobClient is not null && config.AutoClaim)
+            {
+                Con($"  CLAIM: submitting on-chain redemption for {Truncate(pos.Question, 45)}...");
+                var txHash = await clobClient.RedeemWinningPositionAsync(
+                    pos.ConditionId, pos.Side.ToString(), cts.Token);
+                if (txHash is not null)
+                {
+                    log.LogInformation("  Auto-claim tx submitted: {Hash}", txHash);
+                    Con($"  CLAIM tx: {txHash[..Math.Min(txHash.Length, 22)]}...");
+                }
+                else
+                {
+                    Con($"  {YELLOW}CLAIM FAILED — claim manually at polymarket.com{RESET}");
+                }
+            }
+
             var pnl = portfolio.ResolvePosition(pos.ConditionId, won);
             var result = won ? "WON" : "LOST";
             var payoutAmt = won ? pos.Shares : 0.0;
@@ -469,10 +490,11 @@ while (!cts.Token.IsCancellationRequested)
         Con($"SCAN: {markets.Count} total, evaluating top {eligible.Count}");
 
         // Pre-check: skip estimation entirely if exposure is at the limit
-        // Use portfolio value (bankroll + exposure) as base, not just bankroll
+        // Use bankroll (free cash) as base, not portfolio value, to avoid false blocks
+        // when most capital is locked in positions (matches documented behaviour).
         var pv = portfolio.Bankroll + portfolio.TotalExposure();
         var exposureRoom = config.MaxTotalExposurePct * pv - portfolio.TotalExposure();
-        var minRealisticPosition = config.MaxPositionPct * pv * 0.5;
+        var minRealisticPosition = Math.Max(config.MinTradeUsd, config.MaxPositionPct * portfolio.Bankroll);
         // Also can't trade more than available cash
         exposureRoom = Math.Min(exposureRoom, portfolio.Bankroll);
         var atCapacity = exposureRoom < minRealisticPosition;
@@ -547,10 +569,24 @@ while (!cts.Token.IsCancellationRequested)
                 var yesEdge = estimate.FairProbability - market.OutcomeYesPrice;
                 var noEdge = (1.0 - estimate.FairProbability) - market.OutcomeNoPrice;
                 var bestEdge = Math.Max(yesEdge, noEdge);
-                log.LogInformation(
-                    "  {Idx} SKIP (no edge): fair={Fair:P1} vs market={Market:P1} (edge={Edge:+0.0%;-0.0%}, need>{Min:P0})",
-                    idx, estimate.FairProbability, market.OutcomeYesPrice, bestEdge, config.MinEdge);
-                Con($"  {idx} -> {estimate.FairProbability:P0} (edge={bestEdge:+0.0%;-0.0%}) SKIP");
+
+                if (bestEdge > config.MinEdge)
+                {
+                    // Edge exists but Kelly size is below 5-token CLOB minimum or MinTradeUsd
+                    var tokenPrice = yesEdge >= noEdge ? market.OutcomeYesPrice : market.OutcomeNoPrice;
+                    var clobMin = Math.Round(5.0 * tokenPrice, 2);
+                    log.LogInformation(
+                        "  {Idx} SKIP (bankroll ${Bankroll:F2} < min ${ClobMin:F2}): {Side} edge={Edge:+0.0%} — add USDC to trade",
+                        idx, portfolio.Bankroll, clobMin, yesEdge >= noEdge ? "YES" : "NO", bestEdge);
+                    Con($"  {idx} -> {estimate.FairProbability:P0} (edge={bestEdge:+0.0%}) {YELLOW}TOO SMALL: need ${clobMin:F2}, have ${portfolio.Bankroll:F2}{RESET}");
+                }
+                else
+                {
+                    log.LogInformation(
+                        "  {Idx} SKIP (no edge): fair={Fair:P1} vs market={Market:P1} (edge={Edge:+0.0%;-0.0%}, need>{Min:P0})",
+                        idx, estimate.FairProbability, market.OutcomeYesPrice, bestEdge, config.MinEdge);
+                    Con($"  {idx} -> {estimate.FairProbability:P0} (edge={bestEdge:+0.0%;-0.0%}) SKIP");
+                }
                 continue;
             }
 

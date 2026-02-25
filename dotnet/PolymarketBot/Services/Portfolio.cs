@@ -122,7 +122,7 @@ public sealed class Portfolio
         var minClobUsd = 5.0 * marketPrice;
         if (sizeUsd < minClobUsd)
         {
-            _log.LogDebug("Position ${Size:F2} below CLOB minimum ${Min:F2} (5 tokens @ {Price})",
+            _log.LogInformation("Position ${Size:F2} below CLOB minimum ${Min:F2} (5 tokens @ {Price:F3})",
                 sizeUsd, minClobUsd, marketPrice);
             return null;
         }

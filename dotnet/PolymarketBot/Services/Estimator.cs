@@ -90,87 +90,105 @@ public sealed class Estimator
 
     private async Task<CallResult?> SingleCallAsync(MarketInfo market, CancellationToken ct)
     {
-        try
+        // Retry delays for transient API overload (429 / 529): 10s, 20s, 40s
+        int[] backoffMs = { 10_000, 20_000, 40_000 };
+
+        for (var attempt = 0; attempt <= backoffMs.Length; attempt++)
         {
-            var userPrompt = BuildUserPrompt(market);
-
-            var requestBody = new
+            try
             {
-                model = _config.ClaudeModel,
-                max_tokens = _config.MaxEstimateTokens,
-                temperature = _config.EnsembleTemperature,
-                system = SystemPrompt,
-                messages = new[]
+                var userPrompt = BuildUserPrompt(market);
+
+                var requestBody = new
                 {
-                    new { role = "user", content = userPrompt }
+                    model = _config.ClaudeModel,
+                    max_tokens = _config.MaxEstimateTokens,
+                    temperature = _config.EnsembleTemperature,
+                    system = SystemPrompt,
+                    messages = new[]
+                    {
+                        new { role = "user", content = userPrompt }
+                    }
+                };
+
+                var json = JsonSerializer.Serialize(requestBody);
+                var request = new HttpRequestMessage(HttpMethod.Post, $"{_config.AnthropicApiHost}/v1/messages")
+                {
+                    Content = new StringContent(json, Encoding.UTF8, "application/json")
+                };
+                request.Headers.Add("x-api-key", _config.AnthropicApiKey);
+                request.Headers.Add("anthropic-version", "2023-06-01");
+
+                var resp = await _http.SendAsync(request, ct);
+                var status = (int)resp.StatusCode;
+
+                // 429 = rate-limited, 529 = API overloaded — both are transient
+                if (status == 429 || status == 529)
+                {
+                    if (attempt < backoffMs.Length)
+                    {
+                        var delay = backoffMs[attempt];
+                        _log.LogWarning("Anthropic {Status} (attempt {A}/{Max}) — retrying in {Sec}s",
+                            status, attempt + 1, backoffMs.Length, delay / 1000);
+                        await Task.Delay(delay, ct);
+                        continue;
+                    }
+                    _log.LogError("Anthropic {Status}: giving up after {Max} retries for {Question}",
+                        status, backoffMs.Length, Truncate(market.Question, 40));
+                    return null;
                 }
-            };
 
-            var json = JsonSerializer.Serialize(requestBody);
-            var request = new HttpRequestMessage(HttpMethod.Post, $"{_config.AnthropicApiHost}/v1/messages")
+                resp.EnsureSuccessStatusCode();
+
+                var responseJson = await resp.Content.ReadAsStringAsync(ct);
+                var doc = JsonDocument.Parse(responseJson);
+
+                var text = doc.RootElement
+                    .GetProperty("content")[0]
+                    .GetProperty("text")
+                    .GetString()?.Trim() ?? "";
+
+                var usage = doc.RootElement.GetProperty("usage");
+                var inputTokens = usage.GetProperty("input_tokens").GetInt32();
+                var outputTokens = usage.GetProperty("output_tokens").GetInt32();
+
+                // Handle markdown code blocks
+                if (text.StartsWith("```"))
+                {
+                    var lines = text.Split('\n')
+                        .Where(l => !l.TrimStart().StartsWith("```"))
+                        .ToArray();
+                    text = string.Join('\n', lines);
+                }
+
+                var parsed = JsonDocument.Parse(text);
+                var prob = parsed.RootElement.GetProperty("probability").GetDouble();
+                var reasoning = "";
+                if (parsed.RootElement.TryGetProperty("reasoning", out var r))
+                    reasoning = r.GetString() ?? "";
+
+                prob = Math.Clamp(prob, 0.02, 0.98);
+
+                return new CallResult(prob, reasoning, inputTokens, outputTokens);
+            }
+            catch (JsonException ex)
             {
-                Content = new StringContent(json, Encoding.UTF8, "application/json")
-            };
-            request.Headers.Add("x-api-key", _config.AnthropicApiKey);
-            request.Headers.Add("anthropic-version", "2023-06-01");
-
-            var resp = await _http.SendAsync(request, ct);
-
-            if ((int)resp.StatusCode == 429)
-            {
-                _log.LogWarning("Anthropic rate limit — waiting 5s");
-                await Task.Delay(5000, ct);
+                _log.LogDebug("Failed to parse estimate response: {Error}", ex.Message);
                 return null;
             }
-
-            resp.EnsureSuccessStatusCode();
-
-            var responseJson = await resp.Content.ReadAsStringAsync(ct);
-            var doc = JsonDocument.Parse(responseJson);
-
-            var text = doc.RootElement
-                .GetProperty("content")[0]
-                .GetProperty("text")
-                .GetString()?.Trim() ?? "";
-
-            var usage = doc.RootElement.GetProperty("usage");
-            var inputTokens = usage.GetProperty("input_tokens").GetInt32();
-            var outputTokens = usage.GetProperty("output_tokens").GetInt32();
-
-            // Handle markdown code blocks
-            if (text.StartsWith("```"))
+            catch (HttpRequestException ex)
             {
-                var lines = text.Split('\n')
-                    .Where(l => !l.TrimStart().StartsWith("```"))
-                    .ToArray();
-                text = string.Join('\n', lines);
+                _log.LogError("Anthropic API error: {Error}", ex.Message);
+                return null;
             }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogDebug("Estimate call failed: {Error}", ex.Message);
+                return null;
+            }
+        }
 
-            var parsed = JsonDocument.Parse(text);
-            var prob = parsed.RootElement.GetProperty("probability").GetDouble();
-            var reasoning = "";
-            if (parsed.RootElement.TryGetProperty("reasoning", out var r))
-                reasoning = r.GetString() ?? "";
-
-            prob = Math.Clamp(prob, 0.02, 0.98);
-
-            return new CallResult(prob, reasoning, inputTokens, outputTokens);
-        }
-        catch (JsonException ex)
-        {
-            _log.LogDebug("Failed to parse estimate response: {Error}", ex.Message);
-            return null;
-        }
-        catch (HttpRequestException ex)
-        {
-            _log.LogError("Anthropic API error: {Error}", ex.Message);
-            return null;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogDebug("Estimate call failed: {Error}", ex.Message);
-            return null;
-        }
+        return null;
     }
 
     private static string BuildUserPrompt(MarketInfo market)
