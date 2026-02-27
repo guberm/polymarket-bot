@@ -538,6 +538,19 @@ while (!cts.Token.IsCancellationRequested)
                 break;
             }
 
+            // Skip estimation if we can't afford the CLOB minimum for either side.
+            // The cheapest possible trade is 5 tokens × the cheaper side's price.
+            // No point calling Claude when the order would be blocked anyway.
+            var minClobCost = 5.0 * Math.Min(market.OutcomeYesPrice, market.OutcomeNoPrice);
+            if (portfolio.Bankroll < minClobCost)
+            {
+                log.LogInformation(
+                    "  {Idx} SKIP (can't afford CLOB min ${Min:F2}): {Question}",
+                    idx, minClobCost, Truncate(market.Question, 50));
+                Con($"  {idx} SKIP (need ${minClobCost:F2} for 5 tokens, have ${portfolio.Bankroll:F2})");
+                continue;
+            }
+
             // Estimate fair value
             log.LogInformation("  {Idx} Evaluating: {Question}...", idx, Truncate(market.Question, 60));
             Con($"  {idx} EVAL: {Truncate(market.Question, 55)}...");

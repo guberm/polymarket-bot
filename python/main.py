@@ -435,6 +435,22 @@ def main():
                         print(f"[{ts()}]   API RESERVE LOW (${portfolio.bankroll:.2f}) — skipping remaining evaluations")
                     break
 
+                # Skip estimation if we can't afford the CLOB minimum for either side.
+                # The cheapest possible trade is 5 tokens × the cheaper side's price.
+                # No point calling Claude when the order would be blocked anyway.
+                min_clob_cost = 5.0 * min(market.outcome_yes_price, market.outcome_no_price)
+                if portfolio.bankroll < min_clob_cost:
+                    log.info(
+                        f"  [{i}/{len(eligible)}] SKIP (can't afford CLOB min ${min_clob_cost:.2f}): "
+                        f"{market.question[:50]}"
+                    )
+                    if con:
+                        print(
+                            f"[{ts()}]   [{i:>2}/{len(eligible)}] SKIP (need ${min_clob_cost:.2f} "
+                            f"for 5 tokens, have ${portfolio.bankroll:.2f})"
+                        )
+                    continue
+
                 # Estimate fair value
                 log.info(f"  [{i}/{len(eligible)}] Evaluating: {market.question[:60]}...")
                 if con:
