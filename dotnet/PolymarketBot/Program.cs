@@ -592,10 +592,11 @@ while (!cts.Token.IsCancellationRequested)
                     // Edge exists but Kelly size is below 5-token CLOB minimum or MinTradeUsd
                     var tokenPrice = yesEdge >= noEdge ? market.OutcomeYesPrice : market.OutcomeNoPrice;
                     var clobMin = Math.Round(5.0 * tokenPrice, 2);
+                    var kellySide = yesEdge >= noEdge ? "YES" : "NO";
                     log.LogInformation(
-                        "  {Idx} SKIP (bankroll ${Bankroll:F2} < min ${ClobMin:F2}): {Side} edge={Edge:+0.0%} — add USDC to trade",
-                        idx, portfolio.Bankroll, clobMin, yesEdge >= noEdge ? "YES" : "NO", bestEdge);
-                    Con($"  {idx} -> {estimate.FairProbability:P0} (edge={bestEdge:+0.0%}) {YELLOW}TOO SMALL: need ${clobMin:F2}, have ${portfolio.Bankroll:F2}{RESET}");
+                        "  {Idx} SKIP (Kelly size too small for {Side} edge={Edge:+0.0%}): need ${ClobMin:F2} min, bankroll=${Bankroll:F2}",
+                        idx, kellySide, bestEdge, clobMin, portfolio.Bankroll);
+                    Con($"  {idx} -> {estimate.FairProbability:P0} (edge={bestEdge:+0.0%}) {YELLOW}TOO SMALL: need ${clobMin:F2} min, have ${portfolio.Bankroll:F2}{RESET}");
                 }
                 else
                 {
