@@ -169,6 +169,10 @@ if (config.LiveTrading)
     clobClient = new ClobApiClient(config, httpClient, loggerFactory.CreateLogger<ClobApiClient>());
     await clobClient.InitializeAsync(cts.Token);
     Con("CLOB API credentials initialized");
+
+    // Ensure CTF conditional token approvals for exchange contracts (required for SELL orders)
+    await clobClient.EnsureConditionalTokenApprovalsAsync(cts.Token);
+    Con("CTF token approvals verified");
     var liveTrader = new LiveTrader(clobClient, loggerFactory.CreateLogger<LiveTrader>());
     trader = liveTrader;
 

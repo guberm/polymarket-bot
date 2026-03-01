@@ -58,6 +58,10 @@ public sealed class ClobApiClient
     private string _apiSecret = "";
     private string _apiPassphrase = "";
 
+    // Exchange addresses (needed for setApprovalForAll on CTF)
+    private readonly string _exchangeAddress;
+    private readonly string _negRiskExchangeAddress;
+
     // Auto-claim: Polygon RPC + CTF contract
     private readonly string _privateKey;
     private readonly string _polygonRpcUrl;
@@ -82,8 +86,10 @@ public sealed class ClobApiClient
             : config.PolymarketFunderAddress;
 
         _authDomainSep = ComputeAuthDomainSeparator(_chainId);
-        _exchangeDomainSep = ComputeExchangeDomainSeparator(_chainId, config.ExchangeAddress);
-        _negRiskExchangeDomainSep = ComputeExchangeDomainSeparator(_chainId, config.NegRiskExchangeAddress);
+        _exchangeAddress = config.ExchangeAddress;
+        _negRiskExchangeAddress = config.NegRiskExchangeAddress;
+        _exchangeDomainSep = ComputeExchangeDomainSeparator(_chainId, _exchangeAddress);
+        _negRiskExchangeDomainSep = ComputeExchangeDomainSeparator(_chainId, _negRiskExchangeAddress);
 
         _privateKey = config.PolymarketPrivateKey;
         _polygonRpcUrl = config.PolygonRpcUrl;
@@ -325,7 +331,15 @@ public sealed class ClobApiClient
         var negRisk = await GetNegRiskAsync(tokenId, ct);
         int decimals = GetDecimals(tickSize);
 
-        double roundedPrice = Math.Round(price, decimals);
+        _log.LogInformation("[SELL-META] token={Token} tickSize={Tick} negRisk={NegRisk} signatureType={SigType} funder={Funder}",
+            tokenId[..12], tickSize, negRisk, _signatureType, _funderAddress[..10]);
+
+        double tickSizeD = double.Parse(tickSize, CultureInfo.InvariantCulture);
+
+        // Subtract 2 ticks so the SELL crosses the spread and fills as a taker order.
+        // Mirrors the +2 tick aggression used for BUY orders.
+        double roundedPrice = Math.Round(price - 2 * tickSizeD, decimals);
+        roundedPrice = Math.Max(roundedPrice, tickSizeD); // never go below 1 tick
 
         // Safety net: price below tick size rounds to 0 → can't create valid order
         if (roundedPrice <= 0)
@@ -335,7 +349,9 @@ public sealed class ClobApiClient
         }
 
         // For SELL: makerAmount = tokens to sell (max 2 dp), takerAmount = USDC to receive (max 4 dp)
-        double rawMaker = Math.Round(shares, 2);           // tokens we give
+        // Use Floor (not Round) so we never request more tokens than we actually hold.
+        // Math.Round can round 11.076921 → 11.08, exceeding the on-chain balance by a few atomic units.
+        double rawMaker = Math.Floor(shares * 100) / 100;  // floor to 2dp
         double rawTaker = Math.Round(rawMaker * roundedPrice, 4);  // USDC we receive
 
         if (rawMaker < 5.0)
@@ -544,12 +560,16 @@ public sealed class ClobApiClient
             var readBody = await readResp.Content.ReadAsStringAsync(ct);
 
             // Balance is in 6-decimal units (same as USDC), e.g. "7290000" = 7.29 tokens
+            _log.LogInformation("[COND-BALANCE-RAW] {Token}: {Body}", tokenId[..12], readBody[..Math.Min(readBody.Length, 300)]);
             var doc = JsonDocument.Parse(readBody);
             if (doc.RootElement.TryGetProperty("balance", out var balEl) &&
                 long.TryParse(balEl.GetString(), out var balRaw))
             {
                 double balance = balRaw / 1_000_000.0;
-                _log.LogInformation("[COND-BALANCE] {Token}: {Balance:F2} tokens on-chain", tokenId[..12], balance);
+                string allowanceStr = doc.RootElement.TryGetProperty("allowance", out var allowEl)
+                    ? allowEl.GetString() ?? "missing"
+                    : "missing";
+                _log.LogInformation("[COND-BALANCE] {Token}: {Balance:F2} tokens, allowance={Allowance}", tokenId[..12], balance, allowanceStr);
                 return balance;
             }
 
@@ -604,6 +624,120 @@ public sealed class ClobApiClient
             _log.LogWarning("Balance check error: {Error}", ex.Message);
             return null;
         }
+    }
+
+    // ── ERC-1155 setApprovalForAll ──────────────────────────────────
+
+    /// <summary>
+    /// Ensure the CTF contract has approved both exchange contracts as operators
+    /// (required for SELL orders — the exchange needs to transfer conditional tokens).
+    /// Checks isApprovedForAll first; only sends tx if not already approved.
+    /// Requires ctf_address, exchange_address, and polygon_rpc_url in config.
+    /// </summary>
+    public async Task EnsureConditionalTokenApprovalsAsync(CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(_ctfAddress) || string.IsNullOrEmpty(_polygonRpcUrl))
+        {
+            _log.LogWarning("CTF approval check skipped — ctf_address / polygon_rpc_url not configured");
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(_exchangeAddress))
+            await ApproveIfNeededAsync(_ctfAddress, _exchangeAddress, "Exchange", ct);
+
+        if (!string.IsNullOrEmpty(_negRiskExchangeAddress))
+            await ApproveIfNeededAsync(_ctfAddress, _negRiskExchangeAddress, "NegRiskExchange", ct);
+    }
+
+    private async Task ApproveIfNeededAsync(
+        string ctfContract, string operatorAddr, string label, CancellationToken ct)
+    {
+        try
+        {
+            bool approved = await IsApprovedForAllAsync(ctfContract, _signerAddress, operatorAddr, ct);
+            if (approved)
+            {
+                _log.LogInformation("CTF approval OK for {Label} ({Operator})", label, operatorAddr[..10]);
+                return;
+            }
+
+            _log.LogInformation("CTF not approved for {Label} — sending setApprovalForAll tx...", label);
+            var txHash = await SendSetApprovalForAllAsync(ctfContract, operatorAddr, true, ct);
+            _log.LogInformation("setApprovalForAll tx sent for {Label}: {TxHash}", label, txHash);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning("CTF approval check/set failed for {Label}: {Error}", label, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Call CTF.isApprovedForAll(owner, operator) via eth_call (read-only).
+    /// </summary>
+    private async Task<bool> IsApprovedForAllAsync(
+        string ctfContract, string owner, string operatorAddr, CancellationToken ct)
+    {
+        // selector = keccak256("isApprovedForAll(address,address)")[:4] = 0xe985e9c5
+        var selector = Keccak(Encoding.UTF8.GetBytes(
+            "isApprovedForAll(address,address)")).Take(4).ToArray();
+
+        var callData = new byte[4 + 2 * 32];
+        Array.Copy(selector, 0, callData, 0, 4);
+        Array.Copy(AbiEncodeAddress(owner), 0, callData, 4, 32);
+        Array.Copy(AbiEncodeAddress(operatorAddr), 0, callData, 36, 32);
+
+        var dataHex = "0x" + Convert.ToHexString(callData).ToLowerInvariant();
+
+        var result = await PolygonRpcCallAsync<string>(
+            "eth_call",
+            new object[] {
+                new { to = ctfContract, data = dataHex },
+                "latest"
+            }, ct);
+
+        // Result is 32 bytes: 0 = false, 1 = true
+        var clean = result.StartsWith("0x") ? result[2..] : result;
+        return clean.TrimStart('0').Length > 0 && clean.TrimStart('0') != "0";
+    }
+
+    /// <summary>
+    /// Send CTF.setApprovalForAll(operator, approved) as an on-chain transaction.
+    /// </summary>
+    private async Task<string> SendSetApprovalForAllAsync(
+        string ctfContract, string operatorAddr, bool approved, CancellationToken ct)
+    {
+        // selector = keccak256("setApprovalForAll(address,bool)")[:4] = 0xa22cb465
+        var selector = Keccak(Encoding.UTF8.GetBytes(
+            "setApprovalForAll(address,bool)")).Take(4).ToArray();
+
+        var callData = new byte[4 + 2 * 32];
+        Array.Copy(selector, 0, callData, 0, 4);
+        Array.Copy(AbiEncodeAddress(operatorAddr), 0, callData, 4, 32);
+        Array.Copy(AbiEncodeUint256(approved ? 1 : 0), 0, callData, 36, 32);
+
+        var nonceHex = await PolygonRpcCallAsync<string>(
+            "eth_getTransactionCount", new object[] { _signerAddress, "latest" }, ct);
+        var nonce = BigInteger.Parse(
+            nonceHex.TrimStart('0').Length == 0 ? "0" :
+            nonceHex.StartsWith("0x") ? nonceHex[2..] : nonceHex,
+            NumberStyles.HexNumber);
+
+        var gasPriceHex = await PolygonRpcCallAsync<string>(
+            "eth_gasPrice", Array.Empty<object>(), ct);
+        var gasPrice = BigInteger.Parse(
+            gasPriceHex.StartsWith("0x") ? gasPriceHex[2..] : gasPriceHex,
+            NumberStyles.HexNumber);
+        gasPrice = gasPrice * 12 / 10; // 20% buffer
+
+        var gasLimit = new BigInteger(100_000);
+
+        var signedTxBytes = BuildSignedEip155Transaction(
+            new BigInteger(_chainId), ctfContract, BigInteger.Zero,
+            nonce, gasPrice, gasLimit, callData);
+        var signedTxHex = "0x" + Convert.ToHexString(signedTxBytes).ToLowerInvariant();
+
+        return await PolygonRpcCallAsync<string>(
+            "eth_sendRawTransaction", new object[] { signedTxHex }, ct);
     }
 
     // ── L1 Headers (EIP-712 ClobAuth + Ethereum Personal Sign) ──────

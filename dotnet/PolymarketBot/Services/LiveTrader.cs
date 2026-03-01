@@ -152,11 +152,11 @@ public sealed class LiveTrader : ITrader
             return null;
         }
 
-        // Poll for fill (same pattern as BUY)
+        // Poll for fill — same cadence as BUY (5 × 3s = 15s)
         bool matched = false;
-        for (int attempt = 0; attempt < 3; attempt++)
+        for (int attempt = 0; attempt < 5; attempt++)
         {
-            await Task.Delay(2000, ct);
+            await Task.Delay(3000, ct);
             var status = await _clob.GetOrderStatusAsync(result.OrderId, ct);
             if (status == "MATCHED")
             {
@@ -170,7 +170,7 @@ public sealed class LiveTrader : ITrader
 
         if (!matched)
         {
-            _log.LogWarning("SELL order not filled after 6s, cancelling: {OrderId}", result.OrderId);
+            _log.LogWarning("SELL order not filled after 15s, cancelling: {OrderId}", result.OrderId);
             await _clob.CancelOrderAsync(result.OrderId, ct);
             return null;
         }
@@ -273,11 +273,11 @@ public sealed class LiveTrader : ITrader
             return null;
         }
 
-        // Poll for SELL fill
+        // Poll for SELL fill — 5 × 3s = 15s
         bool sellMatched = false;
-        for (int attempt = 0; attempt < 3; attempt++)
+        for (int attempt = 0; attempt < 5; attempt++)
         {
-            await Task.Delay(2000, ct);
+            await Task.Delay(3000, ct);
             var status = await _clob.GetOrderStatusAsync(sellResult.OrderId, ct);
             _log.LogDebug("TOPUP SELL poll {Attempt}: status={Status}", attempt + 1, status);
             if (status == "MATCHED")
@@ -292,7 +292,7 @@ public sealed class LiveTrader : ITrader
         if (!sellMatched)
         {
             _log.LogWarning(
-                "TOPUP SELL not filled after 6s, cancelling: {OrderId} (position now sellable with {Shares:F2} tokens)",
+                "TOPUP SELL not filled after 15s, cancelling: {OrderId} (position now sellable with {Shares:F2} tokens)",
                 sellResult.OrderId, totalShares);
             await _clob.CancelOrderAsync(sellResult.OrderId, ct);
             return null;
