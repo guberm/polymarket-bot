@@ -630,16 +630,24 @@ while (!cts.Token.IsCancellationRequested)
             var trade = await trader.ExecuteAsync(signal, portfolio, cts.Token);
             if (trade is not null)
             {
-                // Re-sync bankroll from on-chain USDC after each trade to prevent
-                // stale estimates causing "not enough balance" on subsequent trades.
+                // After a BUY, only sync DOWN if CLOB shows less than expected.
+                // Don't sync UP — CLOB balance lags behind unsettled trades and
+                // would undo the portfolio's correct internal deduction, causing overspend.
                 if (trader is LiveTrader lt)
                 {
                     var bal = await lt.GetBalanceAsync(cts.Token);
                     if (bal is not null)
                     {
-                        portfolio.SyncBalance(bal.Value);
-                        log.LogInformation("On-chain USDC after trade: ${Balance:F2}", bal.Value);
                         Con($"  USDC balance: ${bal.Value:F2}");
+                        if (bal.Value < portfolio.Bankroll - 0.001)
+                        {
+                            portfolio.SyncBalance(bal.Value);
+                            log.LogInformation("On-chain USDC after trade: ${Balance:F2} (synced down)", bal.Value);
+                        }
+                        else
+                        {
+                            log.LogDebug("On-chain USDC after trade: ${Balance:F2} (skipping upward sync — CLOB lag)", bal.Value);
+                        }
                     }
                 }
 

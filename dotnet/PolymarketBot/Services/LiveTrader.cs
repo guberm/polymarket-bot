@@ -57,19 +57,27 @@ public sealed class LiveTrader : ITrader
 
         // GTC orders may not fill immediately — poll status before tracking as position.
         // With +2-tick aggression the order should cross the spread and fill quickly.
-        bool matched = false;
-        for (int attempt = 0; attempt < 5; attempt++)
+        // If POST response already contains status="matched", skip polling entirely.
+        bool matched = result.IsMatched;
+        if (matched)
         {
-            await Task.Delay(3000, ct);
-            var status = await _clob.GetOrderStatusAsync(result.OrderId, ct);
-            if (status == "MATCHED")
+            _log.LogInformation("GTC order already MATCHED in POST response: {OrderId}", result.OrderId);
+        }
+        else
+        {
+            for (int attempt = 0; attempt < 5; attempt++)
             {
-                matched = true;
-                _log.LogInformation("GTC order MATCHED: {OrderId}", result.OrderId);
-                break;
+                await Task.Delay(3000, ct);
+                var status = await _clob.GetOrderStatusAsync(result.OrderId, ct);
+                if (status == "MATCHED")
+                {
+                    matched = true;
+                    _log.LogInformation("GTC order MATCHED: {OrderId}", result.OrderId);
+                    break;
+                }
+                _log.LogDebug("GTC order poll {Attempt}: status={Status}", attempt + 1, status);
+                if (status is "CANCELLED" or "DELAYED") break; // no point retrying
             }
-            _log.LogDebug("GTC order poll {Attempt}: status={Status}", attempt + 1, status);
-            if (status is "CANCELLED" or "DELAYED") break; // no point retrying
         }
 
         if (!matched)
@@ -152,20 +160,27 @@ public sealed class LiveTrader : ITrader
             return null;
         }
 
-        // Poll for fill — same cadence as BUY (5 × 3s = 15s)
-        bool matched = false;
-        for (int attempt = 0; attempt < 5; attempt++)
+        // If POST response already matched, skip polling.
+        bool matched = result.IsMatched;
+        if (matched)
         {
-            await Task.Delay(3000, ct);
-            var status = await _clob.GetOrderStatusAsync(result.OrderId, ct);
-            if (status == "MATCHED")
+            _log.LogInformation("SELL already MATCHED in POST response: {OrderId}", result.OrderId);
+        }
+        else
+        {
+            for (int attempt = 0; attempt < 5; attempt++)
             {
-                matched = true;
-                _log.LogInformation("SELL GTC order MATCHED: {OrderId}", result.OrderId);
-                break;
+                await Task.Delay(3000, ct);
+                var status = await _clob.GetOrderStatusAsync(result.OrderId, ct);
+                if (status == "MATCHED")
+                {
+                    matched = true;
+                    _log.LogInformation("SELL GTC order MATCHED: {OrderId}", result.OrderId);
+                    break;
+                }
+                _log.LogDebug("SELL GTC poll {Attempt}: status={Status}", attempt + 1, status);
+                if (status is "CANCELLED" or "DELAYED") break;
             }
-            _log.LogDebug("SELL GTC poll {Attempt}: status={Status}", attempt + 1, status);
-            if (status is "CANCELLED" or "DELAYED") break;
         }
 
         if (!matched)
@@ -175,11 +190,12 @@ public sealed class LiveTrader : ITrader
             return null;
         }
 
-        // Close position in portfolio (returns capital + PnL to bankroll)
-        var pnl = portfolio.ClosePosition(pos.ConditionId, price);
+        // Use actual fill price for PnL (not midpoint — SELL is priced -2 ticks below mid)
+        double actualFillPrice = result.ActualShares > 0 ? result.ActualCostUsd / result.ActualShares : price;
+        var pnl = portfolio.ClosePosition(pos.ConditionId, actualFillPrice);
 
-        _log.LogInformation("SOLD: {Question} PnL=${Pnl:+0.00;-0.00} ({Reason})",
-            pos.Question[..Math.Min(pos.Question.Length, 40)], pnl, exitSignal.ExitReason);
+        _log.LogInformation("SOLD: {Question} fill={FillPrice:F4} (mid={Mid:F4}) PnL=${Pnl:+0.00;-0.00} ({Reason})",
+            pos.Question[..Math.Min(pos.Question.Length, 40)], actualFillPrice, price, pnl, exitSignal.ExitReason);
 
         return new Trade
         {

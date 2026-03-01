@@ -169,8 +169,9 @@ public sealed class ClobApiClient
 
     /// <summary>
     /// Result of a CLOB order submission. Contains actual fill amounts when matched.
+    /// IsMatched=true means the POST response already contained status="matched" — no polling needed.
     /// </summary>
-    public record OrderResult(string OrderId, double ActualCostUsd, double ActualShares);
+    public record OrderResult(string OrderId, double ActualCostUsd, double ActualShares, bool IsMatched = false);
 
     public async Task<OrderResult?> PostMarketBuyOrderAsync(
         string tokenId, double amountUsd, double price, CancellationToken ct)
@@ -304,7 +305,10 @@ public sealed class ClobApiClient
             actualShares = takingVal;
         }
 
-        return new OrderResult(orderId!, actualCost, actualShares);
+        bool isMatched = respDoc.RootElement.TryGetProperty("status", out var statusEl) &&
+                         statusEl.GetString()?.Equals("matched", StringComparison.OrdinalIgnoreCase) == true;
+
+        return new OrderResult(orderId!, actualCost, actualShares, isMatched);
     }
 
     /// <summary>
@@ -320,10 +324,10 @@ public sealed class ClobApiClient
         // than actually settled on-chain (e.g. 17.29 recorded but only 7.29 on-chain).
         // Use the actual balance to avoid "not enough balance / allowance" errors.
         var actualBalance = await GetActualConditionalBalanceAsync(tokenId, ct);
-        if (actualBalance.HasValue && actualBalance.Value < shares)
+        if (actualBalance.HasValue && actualBalance.Value < shares - 0.000001)
         {
-            _log.LogWarning("Partial-fill detected: portfolio={Portfolio:F2} tokens, on-chain={OnChain:F2}; selling actual amount",
-                shares, actualBalance.Value);
+            _log.LogWarning("Partial-fill: portfolio={Portfolio:F6} tokens, on-chain={OnChain:F6} (diff={Diff:F6}); using on-chain amount",
+                shares, actualBalance.Value, shares - actualBalance.Value);
             shares = actualBalance.Value;
         }
 
@@ -455,7 +459,10 @@ public sealed class ClobApiClient
             actualCost = takingVal;
         }
 
-        return new OrderResult(orderId!, actualCost, actualShares);
+        bool isMatched = respDoc.RootElement.TryGetProperty("status", out var statusEl) &&
+                         statusEl.GetString()?.Equals("matched", StringComparison.OrdinalIgnoreCase) == true;
+
+        return new OrderResult(orderId!, actualCost, actualShares, isMatched);
     }
 
     // ── Order status & cancel ──────────────────────────────────────
