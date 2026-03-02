@@ -98,8 +98,8 @@ class Portfolio:
         if size_usd < self.config.min_trade_usd:
             return None
 
-        # CLOB minimum order size is 5 tokens → minimum USD = 5 * price
-        min_clob_usd = 5.0 * market_price
+        # CLOB minimum: 5 tokens AND $1 minimum for marketable BUY orders
+        min_clob_usd = max(5.0 * market_price, 1.0)
         if size_usd < min_clob_usd:
             log.debug(f"Position ${size_usd:.2f} below CLOB minimum ${min_clob_usd:.2f} (5 tokens @ {market_price})")
             return None

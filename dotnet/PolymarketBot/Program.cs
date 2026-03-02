@@ -545,9 +545,8 @@ while (!cts.Token.IsCancellationRequested)
             }
 
             // Skip estimation if we can't afford the CLOB minimum for either side.
-            // The cheapest possible trade is 5 tokens × the cheaper side's price.
-            // No point calling Claude when the order would be blocked anyway.
-            var minClobCost = 5.0 * Math.Min(market.OutcomeYesPrice, market.OutcomeNoPrice);
+            // CLOB enforces: 5 tokens minimum AND $1 minimum for marketable BUY orders.
+            var minClobCost = Math.Max(5.0 * Math.Min(market.OutcomeYesPrice, market.OutcomeNoPrice), 1.0);
             if (portfolio.Bankroll < minClobCost)
             {
                 log.LogInformation(

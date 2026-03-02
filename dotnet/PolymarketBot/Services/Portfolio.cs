@@ -118,8 +118,8 @@ public sealed class Portfolio
 
         if (sizeUsd < _config.MinTradeUsd) return null;
 
-        // CLOB minimum order size is 5 tokens → minimum USD = 5 * price
-        var minClobUsd = 5.0 * marketPrice;
+        // CLOB minimum: 5 tokens AND $1 minimum for marketable BUY orders
+        var minClobUsd = Math.Max(5.0 * marketPrice, 1.0);
         if (sizeUsd < minClobUsd)
         {
             _log.LogInformation("Position ${Size:F2} below CLOB minimum ${Min:F2} (5 tokens @ {Price:F3})",

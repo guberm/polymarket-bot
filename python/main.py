@@ -438,9 +438,8 @@ def main():
                     break
 
                 # Skip estimation if we can't afford the CLOB minimum for either side.
-                # The cheapest possible trade is 5 tokens × the cheaper side's price.
-                # No point calling Claude when the order would be blocked anyway.
-                min_clob_cost = 5.0 * min(market.outcome_yes_price, market.outcome_no_price)
+                # CLOB enforces: 5 tokens minimum AND $1 minimum for marketable BUY orders.
+                min_clob_cost = max(5.0 * min(market.outcome_yes_price, market.outcome_no_price), 1.0)
                 if portfolio.bankroll < min_clob_cost:
                     log.info(
                         f"  [{i}/{len(eligible)}] SKIP (can't afford CLOB min ${min_clob_cost:.2f}): "
