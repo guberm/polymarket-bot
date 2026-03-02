@@ -147,3 +147,43 @@ dotnet/PolymarketBot/
 - **Auto-claim** (.NET only) — when a WON position is detected in the position review loop, `ClobApiClient.RedeemWinningPositionAsync()` submits a raw EIP-155 transaction to Polygon calling `CTF.redeemPositions(collateral, parentCollectionId, conditionId, indexSets)`. Calldata is ABI-encoded manually (196 bytes). Signing reuses existing `EthECKey` + Keccak — no new NuGet packages. Requires `ctf_address`, `usdc_address`, `polygon_rpc_url` in config. Controlled by `auto_claim` (default `true`)
 - **Anthropic 429/529 retry** — `Estimator.SingleCallAsync` retries up to 3 times on rate-limit (429) or overload (529) errors, with exponential backoff 10s → 20s → 40s. After max retries returns null (market skipped)
 - **SKIP log clarity** — `Program.cs` distinguishes two null-signal reasons: "SKIP (bankroll < min)" when edge IS sufficient but position size is below CLOB minimum (5 tokens), vs "SKIP (no edge)" when edge is genuinely below threshold. Console shows "TOO SMALL: need $X, have $Y" in the former case
+
+## Dashboard (`dashboard/`)
+
+Electron desktop app for real-time bot monitoring.
+
+### Running
+
+```bash
+# Windows: double-click run-dashboard.bat
+# Or:
+cd dashboard && npm install && npm start
+```
+
+### Files
+
+```text
+dashboard/
+  main.js       Main process: IPC handlers, file watchers, bot process management
+  preload.js    Context bridge (exposes safe API to renderer)
+  renderer.js   All UI logic: stats, tables, charts, log, config, resize handles
+  index.html    UI shell: stats row, positions table, trade table, charts, log, modals
+  styles.css    Dark theme CSS
+  package.json  electron ^33.0.0 devDependency
+```
+
+### Key Patterns
+
+- **Bot spawn**: Use `shell: false` when running a direct `.exe` path (avoids Windows CMD splitting paths at spaces). Use `shell: true` for `python` / `dotnet run` (PATH-based commands).
+- **Log isolation**: `logClearedAt = Date.now()` at dashboard load → hides all pre-existing log entries. `confirmStart()` resets `logClearedAt = 0` + `logs = []` for a fresh session view.
+- **Log file rotation**: Old `bot.log` renamed to `bot-TIMESTAMP.log` before each new bot start (in `main.js` start-bot handler).
+- **Timestamp normalization**: `parseTs(ts)` helper strips extra fractional-second digits before `new Date()` — handles .NET's 7-decimal `ToString("o")` format reliably.
+- **Charts**: Initialized once with `animation: false`; updated with `chart.update('none')` — prevents jumping/flickering on 8-second refresh.
+- **FileShare fix (.NET)**: `bot.log` must be opened with `FileShare.ReadWrite` in `Program.cs` so both the bot and dashboard can access it simultaneously.
+- **Stale exe**: After source changes to .NET, rebuild with `dotnet build -c Debug` from `dotnet/PolymarketBot/`. The dashboard prefers the compiled exe over `dotnet run` to avoid recompile locking.
+
+### IPC Channels
+
+`read-portfolio`, `read-trades`, `read-logs`, `read-config`, `write-config`, `get-data-dir`, `set-data-dir`, `browse-data-dir`, `bot-status`, `start-bot`, `stop-bot`, `save-file`
+
+Push events (main → renderer): `file-changed`, `bot-output`, `bot-stopped`

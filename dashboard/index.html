@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; blob: *;">
+  <title>Polymarket Bot Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- ── Header ──────────────────────────────────────────────────────── -->
+    <header id="header">
+      <div class="header-left">
+        <div class="logo">⬡ POLYMARKET BOT</div>
+        <div id="bot-status-badge" class="badge badge-gray">STOPPED</div>
+        <div id="halted-badge" class="badge badge-amber hidden">HALTED</div>
+      </div>
+      <div class="header-center">
+        <span id="data-dir-label" class="data-dir-label" title="Click to change data directory"></span>
+        <button id="btn-browse-dir" class="btn btn-ghost" title="Browse data directory">📁</button>
+      </div>
+      <div class="header-right">
+        <span id="last-updated" class="muted small"></span>
+        <button id="btn-config" class="btn btn-secondary">⚙ Config</button>
+        <button id="btn-start-stop" class="btn btn-success">▶ Start Bot</button>
+      </div>
+    </header>
+
+    <!-- ── Stats Row ───────────────────────────────────────────────────── -->
+    <div class="stats-row">
+      <div class="stat-card" id="card-bankroll">
+        <div class="stat-label">FREE CASH</div>
+        <div class="stat-value" id="val-bankroll">—</div>
+        <div class="stat-sub" id="sub-bankroll">initial —</div>
+        <div class="stat-bar-wrap"><div class="stat-bar" id="bar-bankroll" style="width:0%"></div></div>
+      </div>
+      <div class="stat-card" id="card-portval">
+        <div class="stat-label">PORTFOLIO VALUE</div>
+        <div class="stat-value" id="val-portval">—</div>
+        <div class="stat-sub" id="sub-portval">exposure —</div>
+        <div class="stat-bar-wrap"><div class="stat-bar bar-blue" id="bar-exposure" style="width:0%"></div></div>
+      </div>
+      <div class="stat-card" id="card-realized">
+        <div class="stat-label">REALIZED P&amp;L</div>
+        <div class="stat-value" id="val-realized">—</div>
+        <div class="stat-sub" id="sub-realized">— trades closed</div>
+      </div>
+      <div class="stat-card" id="card-unrealized">
+        <div class="stat-label">UNREALIZED P&amp;L</div>
+        <div class="stat-value" id="val-unrealized">—</div>
+        <div class="stat-sub" id="sub-unrealized">— positions open</div>
+      </div>
+      <div class="stat-card" id="card-drawdown">
+        <div class="stat-label">DRAWDOWN</div>
+        <div class="stat-value" id="val-drawdown">—</div>
+        <div class="stat-sub" id="sub-drawdown">hwm —</div>
+        <div class="stat-bar-wrap"><div class="stat-bar bar-red" id="bar-drawdown" style="width:0%"></div></div>
+      </div>
+      <div class="stat-card" id="card-winrate">
+        <div class="stat-label">WIN RATE</div>
+        <div class="stat-value" id="val-winrate">—</div>
+        <div class="stat-sub" id="sub-winrate">— / — closed</div>
+        <div class="stat-bar-wrap"><div class="stat-bar bar-green" id="bar-winrate" style="width:0%"></div></div>
+      </div>
+    </div>
+
+    <!-- ── Main Grid ───────────────────────────────────────────────────── -->
+    <div class="main-grid" id="main-grid">
+
+      <!-- LEFT col -->
+      <div class="left-col" id="left-col">
+
+        <!-- Open Positions -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">OPEN POSITIONS</span>
+            <span id="positions-count" class="badge badge-blue">0</span>
+            <!-- Category filter pills -->
+            <div id="cat-filters" class="cat-filters"></div>
+          </div>
+          <div class="table-scroll" id="positions-scroll">
+            <table class="data-table" id="positions-table">
+              <thead>
+                <tr>
+                  <th class="th-sort" data-sort="market">MARKET <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="side">SIDE <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="entry">ENTRY <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="current">CURRENT <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="fair">FAIR EST. <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="shares">SHARES <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="cost">COST <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="value">VALUE <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="pnl">P&amp;L $ <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="pnlpct">P&amp;L % <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="edge">EDGE <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="category">CATEGORY <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="age">AGE <span class="sort-ind"></span></th>
+                </tr>
+              </thead>
+              <tbody id="positions-body">
+                <tr><td colspan="13" class="empty-msg">No data — waiting for portfolio.json</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Charts row -->
+        <div class="charts-row">
+          <div class="card">
+            <div class="card-header"><span class="card-title">CUMULATIVE P&amp;L</span></div>
+            <div class="chart-wrap"><canvas id="pnl-chart"></canvas></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">EXPOSURE BY CATEGORY</span></div>
+            <div class="chart-wrap"><canvas id="cat-chart"></canvas></div>
+          </div>
+        </div>
+
+        <!-- Trade History -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">TRADE HISTORY</span>
+            <span id="trades-count" class="badge badge-blue">0</span>
+          </div>
+          <div class="table-scroll" style="height:200px;resize:vertical;min-height:80px">
+            <table class="data-table" id="trades-table">
+              <thead>
+                <tr>
+                  <th class="th-sort" data-sort="time">TIME <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="action">ACTION <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="side">SIDE <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="market">MARKET <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="price">PRICE <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="size">SIZE <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="shares">SHARES <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="edge">EDGE <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="kelly">KELLY <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="exit">EXIT <span class="sort-ind"></span></th>
+                  <th class="th-sort" data-sort="paper">PAPER <span class="sort-ind"></span></th>
+                </tr>
+              </thead>
+              <tbody id="trades-body">
+                <tr><td colspan="11" class="empty-msg">No trades yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div><!-- /left-col -->
+
+      <!-- Horizontal resize handle -->
+      <div class="rh rh-h" id="rh-main" title="Drag to resize"></div>
+
+      <!-- RIGHT col -->
+      <div class="right-col" id="right-col">
+
+        <!-- Upper: risk + exit (vertically resizable) -->
+        <div id="right-upper">
+          <!-- Risk Meters -->
+          <div class="card">
+            <div class="card-header"><span class="card-title">RISK LIMITS</span></div>
+            <div id="risk-container" class="risk-container"></div>
+          </div>
+
+          <!-- Exit Reason Stats -->
+          <div class="card">
+            <div class="card-header"><span class="card-title">EXIT BREAKDOWN</span></div>
+            <div id="exit-stats" class="exit-stats"></div>
+          </div>
+        </div>
+
+        <!-- Vertical resize handle -->
+        <div class="rh rh-v" id="rh-right" title="Drag to resize"></div>
+
+        <!-- Live Log -->
+        <div class="card log-card flex-grow">
+          <div class="card-header">
+            <span class="card-title">LIVE LOG</span>
+            <div class="log-controls">
+              <label class="check-label"><input type="checkbox" id="log-autoscroll" checked> auto-scroll</label>
+              <button id="btn-open-logs-dir" class="btn btn-ghost btn-xs" title="Open logs folder in Explorer">📂 folder</button>
+              <button id="btn-export-log" class="btn btn-ghost btn-xs" title="Export log to file">⬇ export</button>
+              <button id="btn-clear-log" class="btn btn-ghost btn-xs">✕ clear</button>
+            </div>
+          </div>
+          <div id="log-container" class="log-container"></div>
+        </div>
+
+      </div><!-- /right-col -->
+    </div><!-- /main-grid -->
+  </div><!-- /app -->
+
+  <!-- ══ Config Modal ═══════════════════════════════════════════════════════ -->
+  <div id="config-modal" class="modal-overlay hidden">
+    <div class="modal-box modal-wide">
+      <div class="modal-hdr">
+        <h2>⚙ Configuration</h2>
+        <div class="modal-hdr-right">
+          <button id="btn-save-config" class="btn btn-success">💾 Save</button>
+          <button id="btn-close-config" class="btn btn-ghost">✕</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div id="config-data-dir" class="config-datadir-row">
+          <span class="muted small">Data dir: </span>
+          <span id="cfg-datadir-val" class="small mono"></span>
+          <button id="cfg-browse-btn" class="btn btn-ghost btn-xs">Browse</button>
+        </div>
+        <div id="config-form" class="config-form"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Start Bot Modal ════════════════════════════════════════════════════ -->
+  <div id="start-modal" class="modal-overlay hidden">
+    <div class="modal-box modal-small">
+      <div class="modal-hdr">
+        <h2>▶ Start Bot</h2>
+        <button id="btn-close-start" class="btn btn-ghost">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Implementation</label>
+          <div class="radio-row">
+            <label class="radio-label"><input type="radio" name="bot-mode" value="python" checked> Python</label>
+            <label class="radio-label"><input type="radio" name="bot-mode" value="dotnet"> .NET</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Flags</label>
+          <div class="check-row">
+            <label class="check-label"><input type="checkbox" id="opt-verbose"> --verbose</label>
+            <label class="check-label"><input type="checkbox" id="opt-console"> --console</label>
+          </div>
+        </div>
+        <button id="btn-confirm-start" class="btn btn-success btn-full">▶ Launch</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

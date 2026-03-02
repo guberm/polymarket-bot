@@ -78,6 +78,42 @@ dotnet run -- --console  # human-readable console output
 run-bot.bat   ← double-click, reads polymarket_bot_config.json automatically
 ```
 
+**Dashboard (Windows):**
+
+```text
+run-dashboard.bat   ← double-click to launch the Electron desktop dashboard
+```
+
+Or install and run manually:
+
+```bash
+cd dashboard
+npm install
+npm start
+```
+
+## Dashboard
+
+An Electron desktop app that visualises the bot's state in real time.
+
+**Features:**
+
+- Live portfolio stats — free cash, portfolio value, realized/unrealized P&L, drawdown, win rate
+- Open positions table with sortable columns, category color-coding, and per-category hide/show filters
+- Trade history table with sortable columns (all 11 columns)
+- Cumulative P&L and exposure-by-category charts (flicker-free, update in-place)
+- Risk limit meters (per-position, per-category, total exposure, daily stop-loss, drawdown)
+- Exit reason breakdown
+- Live log — shows only the current session, clears between restarts, supports manual clear and export
+- Config editor — view and edit all `polymarket_bot_config.json` fields in-browser
+- Start / Stop bot — launches Python or .NET implementation with optional `--verbose` / `--console` flags; preferences persist across sessions
+
+**Requirements:** Node.js (for first-time `npm install`). No rebuild needed after that — `run-dashboard.bat` uses the cached Electron binary.
+
+**Data directory:** The dashboard auto-detects `data/` next to the project root. Click the folder icon in the header to point it at a different directory.
+
+**Log file handling:** Each bot session rotates the previous `bot.log` to `bot-TIMESTAMP.log` so sessions are isolated. The dashboard opens with a clean log and only shows entries from the current run.
+
 ## Live Trading
 
 > **Warning:** Live trading uses real money. Start with paper trading to validate signals.

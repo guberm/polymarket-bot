@@ -75,7 +75,10 @@ Directory.CreateDirectory(config.DataDir);
 
 // JSON file logger (matches Python's JsonFormatter → data/bot.log)
 using var fileLogStream = new StreamWriter(
-    Path.Combine(config.DataDir, "bot.log"), append: true) { AutoFlush = true };
+    new FileStream(
+        Path.Combine(config.DataDir, "bot.log"),
+        FileMode.Append, FileAccess.Write, FileShare.ReadWrite),
+    System.Text.Encoding.UTF8) { AutoFlush = true };
 
 using var loggerFactory = LoggerFactory.Create(builder =>
 {

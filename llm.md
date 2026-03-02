@@ -7,6 +7,7 @@ Comprehensive description of the codebase for future Claude sessions.
 ## Project Summary
 
 Autonomous trading bot for Polymarket (binary prediction markets). Each cycle it:
+
 1. Reviews open positions (exit if stop-loss / take-profit / edge-gone / resolved)
 2. Scans Gamma API for active markets
 3. Estimates fair probability via ensemble of N Claude API calls (trimmed mean)
@@ -24,6 +25,7 @@ The bot pays for its own Claude API inference from its bankroll. Two identical i
 Single `BotConfig` dataclass. Load priority: **CLI arg → env var → `polymarket_bot_config.json` → code default**.
 
 Key fields and defaults:
+
 - `live_trading: bool = False` — paper vs real orders
 - `scan_interval_minutes: int = 10` — sleep between cycles
 - `min_liquidity: float = 5000` — Gamma API filter
@@ -58,28 +60,36 @@ Key fields and defaults:
 
 All domain types. Both implementations share the same field names.
 
-### `MarketInfo`
+### MarketInfo
+
 Parsed from Gamma API. Key fields: `condition_id`, `question`, `outcome_yes_price`, `outcome_no_price`, `token_id_yes`, `token_id_no`, `liquidity`, `volume_24hr`, `best_bid`, `best_ask`, `spread`, `end_date`, `category`, `event_title`, `description`.
 
-### `Estimate`
+### Estimate
+
 Output of Claude ensemble. Key fields: `fair_probability` (trimmed mean), `raw_estimates` (list), `confidence` (std dev), `reasoning_summary` (first call's reasoning), `input_tokens_used`, `output_tokens_used`.
 
-### `Signal`
+### Signal
+
 Generated when edge exceeds threshold. Key fields: `market`, `estimate`, `side` (YES/NO), `edge`, `market_price`, `kelly_fraction`, `position_size_usd`, `expected_value`.
 
-### `Position`
+### Position
+
 Open position in portfolio. Key fields: `condition_id`, `question`, `side`, `token_id`, `entry_price`, `size_usd` (cost basis), `shares`, `current_price`, `unrealized_pnl`, `category`, `fair_estimate_at_entry` (original Claude estimate — used for edge-gone exit logic), `order_id`.
 
-### `Trade`
+### Trade
+
 Completed trade record (BUY or SELL). Key fields: `trade_id`, `condition_id`, `side`, `action` (BUY/SELL), `price`, `size_usd`, `shares`, `is_paper`, `edge_at_entry`, `kelly_at_entry`, `exit_reason`.
 
-### `ExitSignal`
+### ExitSignal
+
 Signals a position should be closed. Fields: `position`, `exit_reason` (`stop_loss`/`take_profit`/`edge_gone`), `current_price`, `unrealized_pnl`, `pnl_pct`.
 
-### `TopupCandidate`
+### TopupCandidate
+
 Tiny position (<5 tokens) that wants to exit but can't (CLOB minimum is 5 tokens). Fields: `position`, `exit_reason`, `tokens_to_buy=5.0`, `topup_cost` (5 × current_price), `recovery_value` (current shares × current_price).
 
-### `PortfolioSnapshot`
+### PortfolioSnapshot
+
 Persisted state. Fields: `bankroll`, `initial_bankroll`, `positions`, `high_water_mark`, `daily_start_value`, `total_realized_pnl`, `total_trades`, `is_halted`.
 
 ---
@@ -88,7 +98,7 @@ Persisted state. Fields: `bankroll`, `initial_bankroll`, `positions`, `high_wate
 
 Runs indefinitely, one cycle per `scan_interval_minutes`.
 
-### Cycle structure:
+### Cycle structure
 
 **1. Halt check** — if `is_halted`, send notification and break.
 
@@ -97,6 +107,7 @@ Runs indefinitely, one cycle per `scan_interval_minutes`.
 **3. Balance sync** — live trading only: fetch actual on-chain USDC balance from CLOB API and call `portfolio.sync_balance(balance)`. This corrects any drift from fees, partial fills, or resolved positions returning USDC.
 
 **4. Position review** (if `enable_position_review` and positions exist):
+
 - Fetch current midpoint prices for all held tokens via CLOB API
 - Update `current_price` and `unrealized_pnl` on all positions
 
@@ -113,6 +124,7 @@ Runs indefinitely, one cycle per `scan_interval_minutes`.
 **7. Exposure capacity check** — pre-check if `exposure_room < min_realistic_position`. If so, skip all estimations (saves API costs).
 
 **8. Market evaluation loop** — for each market:
+
 - Skip if already holding this `condition_id`
 - Skip if `atCapacity` (exposure full)
 - Skip if `bankroll < $0.30` (API reserve guard — bot keeps running for position review)
@@ -135,8 +147,10 @@ Runs indefinitely, one cycle per `scan_interval_minutes`.
 
 ## MarketScanner (`python/market_scanner.py` / `dotnet/Services/MarketScanner.cs`)
 
-### `scan()` / `ScanAsync()`
+### scan() / ScanAsync()
+
 Paginates through `{gamma_api_host}/events?active=true&closed=false&limit=100&offset=N`. Each event contains `markets[]`. Filters each market:
+
 - `active=true` and `closed=false`
 - Exactly 2 binary outcomes
 - `liquidity >= min_liquidity`
@@ -150,10 +164,12 @@ Category classification uses `CATEGORY_KEYWORDS` dict with keyword matching agai
 
 Markets sorted by `volume_24hr` descending.
 
-### `check_market_resolution(condition_id)` / `CheckMarketResolutionAsync`
+### check_market_resolution(condition_id) / CheckMarketResolutionAsync
+
 Queries `{clob_host}/markets/{condition_id}`. Returns `{"winning_side": "YES"|"NO"}` if `closed=true` and a token has `winner=true`. Returns None if still active or can't determine.
 
-### `get_market_prices(token_ids)` / `GetMarketPricesAsync`
+### get_market_prices(token_ids) / GetMarketPricesAsync
+
 Fetches midpoint price for each token from `{clob_host}/midpoint?token_id=...`. Returns dict of `token_id → price`.
 
 ---
@@ -161,21 +177,26 @@ Fetches midpoint price for each token from `{clob_host}/midpoint?token_id=...`. 
 ## Estimator (`python/estimator.py` / `dotnet/Services/Estimator.cs`)
 
 ### Ensemble approach
+
 Calls Claude `ensemble_size` (default 5) times independently for each market. Uses `temperature=0.7` for diversity. Drops highest and lowest if ≥ 4 samples (trimmed mean). Confidence = standard deviation of all samples.
 
 ### System prompt
+
 Asks for calibrated probability estimate. Rules: output only JSON `{"probability": 0.XX, "reasoning": "..."}`, probability clamped to [0.02, 0.98], do NOT anchor on market price, keep reasoning under 50 words.
 
 ### User prompt
+
 Includes: market question, event title, description (truncated to 500 chars), category, resolution date.
 
 ### Error handling
+
 - Python: catches `anthropic.RateLimitError` → sleep 5s, returns None for that call
 - .NET: retries on HTTP 429 or 529 with exponential backoff 10s → 20s → 40s, up to 3 retries
 - JSON parse failures return None for that call
 - If fewer than 2 valid estimates collected, warning logged; if 0, returns None (market skipped)
 
 ### Token cost tracking
+
 Sums input/output tokens across all calls, returns in `Estimate`. Main loop deducts cost from bankroll via `portfolio.record_api_cost()`.
 
 ---
@@ -184,8 +205,9 @@ Sums input/output tokens across all calls, returns in `Estimate`. Main loop dedu
 
 All financial math and state management.
 
-### Kelly criterion (`generate_signal`)
-```
+### Kelly criterion (generate_signal)
+
+```text
 b = (1/market_price) - 1     # decimal odds
 p = fair_probability          # for YES side
 q = 1 - p
@@ -195,10 +217,13 @@ size_usd = kelly * portfolio_value   # use total portfolio value, not just cash
 size_usd = min(size_usd, portfolio_value * max_position_pct)  # position cap
 size_usd = min(size_usd, bankroll)   # never exceed available cash
 ```
+
 Returns None if: edge < min_edge for both sides, market_price ≤ 0 or ≥ 1, size_usd < min_trade_usd, size_usd < 5 × market_price (CLOB minimum of 5 tokens).
 
-### Risk checks (`check_risk`)
+### Risk checks (check_risk)
+
 In order:
+
 1. Already holding this market → block
 2. `len(positions) >= max_concurrent_positions` → block
 3. `total_exposure + new_size > portfolio_value × max_total_exposure_pct` → block
@@ -208,21 +233,26 @@ In order:
 7. `bankroll + total_exposure < $1` → halt (agent dead)
 
 ### Position management
+
 - `open_position()`: deducts `size_usd` from bankroll, appends to positions list
 - `close_position(condition_id, exit_price)`: removes position, returns `size_usd + pnl` to bankroll. PnL = `shares × (exit_price - entry_price)`. Updates high water mark.
 - `resolve_position(condition_id, won)`: won → payout = shares (each share = $1 at resolution). lost → payout = 0.
 - `add_to_position()`: for topup-and-sell; adds shares and cost to existing position.
 
 ### Exit signal generation
+
 Iterates all positions, skips `current_price < $0.01` (penny) or `shares < 5` (tiny). Checks in order: stop-loss → take-profit → edge-gone. Returns list of ExitSignal.
 
 ### Balance sync
+
 `sync_balance(actual_usdc_balance)`: always updates bankroll to actual on-chain USDC (up or down). Ignores changes < $0.001. Updates high water mark.
 
 ### API cost tracking
+
 `record_api_cost(input_tokens, output_tokens)`: deducts `(input × $3/MTok + output × $15/MTok)` from bankroll. Accumulates in `total_api_cost`.
 
 ### Persistence
+
 `snapshot()` creates a `PortfolioSnapshot` with all state. `total_api_cost` is NOT persisted (resets each run).
 
 ---
@@ -230,14 +260,17 @@ Iterates all positions, skips `current_price < $0.01` (penny) or `shares < 5` (t
 ## Trader (`python/trader.py` / `dotnet/Services/LiveTrader.cs`, `PaperTrader.cs`)
 
 ### PaperTrader
+
 - `execute(signal, portfolio)`: creates Position at `signal.market_price`, `size_usd = signal.position_size_usd`, `shares = size_usd / price`. Calls `portfolio.open_position()`. Returns Trade.
 - `execute_sell(exit_signal, portfolio)`: calls `portfolio.close_position()`. Returns Trade.
 - `execute_topup_and_sell(candidate, portfolio)`: calls `portfolio.add_to_position(5 tokens)` then simulate sell.
 
 ### LiveTrader
+
 Uses py-clob-client (Python) or direct CLOB API calls (C# ClobApiClient).
 
 **BUY flow** (`execute` / `ExecuteAsync`):
+
 1. Set price = `signal.market_price + 0.02` (2 ticks aggression to cross spread, capped at 0.99)
 2. Create GTC limit order via CLOB
 3. Poll for MATCHED status: 5 attempts × 3s each = 15s max
@@ -245,6 +278,7 @@ Uses py-clob-client (Python) or direct CLOB API calls (C# ClobApiClient).
 5. If matched → parse actual fill amounts from response, open position with actual price/shares
 
 **SELL flow** (`execute_sell` / `ExecuteSellAsync`):
+
 1. Fetch actual on-chain conditional token balance (via `update_balance_allowance` then `get_balance_allowance`)
 2. If on-chain balance < portfolio recorded shares → use actual balance (partial fill correction)
 3. Skip if price < $0.01 or shares < 5
@@ -253,6 +287,7 @@ Uses py-clob-client (Python) or direct CLOB API calls (C# ClobApiClient).
 6. If matched → call `portfolio.close_position()`, return Trade
 
 **TopupAndSell flow**:
+
 1. BUY 5 tokens (same GTC polling as BUY)
 2. Update position via `portfolio.add_to_position(5, cost)`
 3. Fetch actual on-chain balance to get true total
@@ -260,7 +295,9 @@ Uses py-clob-client (Python) or direct CLOB API calls (C# ClobApiClient).
 5. If SELL fails → position now has 5+ tokens, will be sellable next cycle
 
 ### CLOB authentication (.NET ClobApiClient)
+
 Implements EIP-712 signing from scratch using Nethereum. Two auth levels:
+
 - **L1 (CLOB auth)**: Signs `ClobAuth` struct with domain `ClobAuthDomain` — used to derive API keys
 - **L2 (Order signing)**: Signs `Order` struct with domain `Polymarket CTF Exchange` (includes verifyingContract = exchange address) — used for each order
 - **HMAC**: L2 requests also include HMAC-SHA256 signature of timestamp+method+path+body
@@ -313,7 +350,7 @@ SMTP: STARTTLS (port 587) if `email_use_tls=true`, SMTP_SSL (port 465) if false.
 
 ## Data Flow Diagram
 
-```
+```text
 main.py (main loop)
 ├── scanner.scan()
 │   └── Gamma API /events (paginated)
@@ -351,8 +388,9 @@ main.py (main loop)
 ## File Index
 
 ### Python
+
 | File | Purpose |
-|------|---------|
+| --- | --- |
 | [python/main.py](python/main.py) | Main orchestration loop |
 | [python/config.py](python/config.py) | BotConfig dataclass + config loading |
 | [python/models.py](python/models.py) | All domain dataclasses and enums |
@@ -365,8 +403,9 @@ main.py (main loop)
 | [python/logger_setup.py](python/logger_setup.py) | Dual logging: colored console + JSON file |
 
 ### .NET
+
 | File | Purpose |
-|------|---------|
+| --- | --- |
 | [dotnet/PolymarketBot/Program.cs](dotnet/PolymarketBot/Program.cs) | Async main loop (mirrors python/main.py) |
 | [dotnet/PolymarketBot/BotConfig.cs](dotnet/PolymarketBot/BotConfig.cs) | Config (mirrors python/config.py) |
 | [dotnet/PolymarketBot/Services/MarketScanner.cs](dotnet/PolymarketBot/Services/MarketScanner.cs) | Market discovery (mirrors market_scanner.py) |
@@ -403,3 +442,112 @@ main.py (main loop)
 9. **.NET Estimator uses raw HttpClient** to Anthropic REST API (no SDK). Python uses the `anthropic` SDK. Both hit the same endpoint with the same request format.
 
 10. **Auto-claim (.NET only)**: When `auto_claim=true` and a WON position is detected, an on-chain EIP-155 tx is submitted to Polygon calling `CTF.redeemPositions`. Failure is non-blocking — the USDC returns to the wallet eventually when claimed manually, and balance sync will pick it up.
+
+---
+
+## Dashboard (`dashboard/`)
+
+Electron desktop app for real-time bot monitoring. Runs alongside (or instead of) the CLI. Does not modify any bot data — read-only except for `write-config`.
+
+### Architecture
+
+Standard Electron three-process model:
+
+- **main.js** — Node.js main process. File I/O, child process management, IPC handlers, `fs.watch` file watchers.
+- **preload.js** — Context bridge. Exposes `window.api` to renderer using `contextBridge.exposeInMainWorld`. No raw Node APIs leak to the renderer.
+- **renderer.js** — Browser-context UI logic. All display logic: stats, charts, tables, log, modals, resize.
+- **index.html** / **styles.css** — UI shell and dark theme.
+
+### Running
+
+```bash
+cd dashboard
+npm install      # first time only
+npm start        # or run-dashboard.bat from project root
+```
+
+### Main Process (main.js)
+
+Key functions:
+
+- `findDataDir()` — looks for `../data` relative to `dashboard/`, falls back to `userData/data`
+- `getBotRoot()` — `path.dirname(dataDir)` — project root
+- `getConfigPath()` — `botRoot/polymarket_bot_config.json`
+- `setupFileWatcher()` — watches `data/` dir for changes to `portfolio.json`, `trades.jsonl`, `bot.log`; sends `file-changed` IPC event to renderer
+- `readLines(file, n)` — reads last N lines of a JSONL file; non-JSON lines get `timestamp: new Date().toISOString()`
+
+**IPC handlers**: `get-data-dir`, `set-data-dir`, `browse-data-dir`, `read-portfolio`, `read-trades`, `read-logs`, `read-config`, `write-config`, `bot-status`, `start-bot`, `stop-bot`, `save-file`
+
+**start-bot handler**:
+
+1. Rotates `bot.log` → `bot-TIMESTAMP.log` (isolates sessions)
+2. Checks for pre-compiled exe: `bin/Release/net8.0/PolymarketBot.exe` then `bin/Debug/net8.0/PolymarketBot.exe`
+3. If exe found: `spawn(exePath, extraArgs, { shell: false })` — `shell: false` critical for paths with spaces
+4. If no exe (first run): `spawn('dotnet', ['run', ...], { shell: true })`
+5. Python: `spawn('python', ['main.py', ...], { shell: true })`
+6. Forwards stdout → `bot-output` IPC (level: INFO), stderr → `bot-output` (level: WARNING)
+7. On exit: `bot-stopped` IPC with exit code
+
+### Renderer (renderer.js)
+
+**State variables**:
+
+- `portfolio`, `trades`, `logs`, `extraLogLines` — data from IPC reads
+- `logClearedAt = Date.now()` — initialized to load time so pre-existing log entries are hidden; reset to 0 on bot start
+- `pnlChart`, `catChart` — Chart.js instances, created once
+- `posSort`, `tradesSort = { col, dir }` — sort state for each table
+- `hiddenCategories = new Set()` — category filter state
+- `catColorCache` — stable category → color mapping
+
+**Key functions**:
+
+- `init()` — bootstraps: get data dir, init charts, first refresh, start 8s interval, wire IPC listeners
+- `refresh()` — reads portfolio + trades + logs in parallel, renders all sections
+- `initCharts()` — creates Chart.js instances with `animation: false` and `responsive: true`
+- `renderPnlChart()` / `renderCatChart()` — update data in-place, call `chart.update('none')` (no flicker)
+- `renderCategoryFilters()` — renders filter pills; click toggles `hiddenCategories`; pill has colored dot
+- `renderPositions()` — filters hidden categories, sorts by `posSort`, renders table rows
+- `renderTrades()` — sorts by `tradesSort` (default: newest-first by timestamp), limit 500 rows
+- `renderLog()` — filters `logs` by `logClearedAt` using `parseTs()`; replaces container HTML
+- `appendLogLine()` — appends a single line DOM node (for live bot-output events)
+- `initSortHeaders()` — attaches click handlers to `.th-sort` headers in both `#positions-table` and `#trades-table`
+- `setupResize()` — drag handles for horizontal split (left/right cols) and vertical split (right-upper/log)
+- `parseTs(ts)` — normalizes timestamps before `new Date()`: strips extra fractional-second digits (handles .NET's 7-decimal `ToString("o")`)
+- `exportLog()` — filters both `logs` and `extraLogLines` by `logClearedAt`, sorts, exports via `save-file` IPC
+- `confirmStart()` — saves mode/flags to localStorage, resets log state (`logClearedAt=0, logs=[], extraLogLines=[]`), starts bot
+- `openConfig()` / `saveConfig()` — reads/writes `polymarket_bot_config.json` via IPC; renders form from `CONFIG_SCHEMA`
+
+**Log isolation pattern**:
+
+```javascript
+// On dashboard load:
+let logClearedAt = Date.now()  // hides all pre-existing entries
+
+// On bot start (confirmStart):
+logClearedAt = 0; logs = []; extraLogLines = []; container.innerHTML = ''
+
+// On clear button:
+logClearedAt = Date.now(); extraLogLines = []; container.innerHTML = ''
+
+// In renderLog / exportLog / onBotOutput:
+parseTs(l.timestamp) > logClearedAt  // only show post-clear entries
+```
+
+### Dashboard File Index
+
+| File | Purpose |
+| --- | --- |
+| [dashboard/main.js](dashboard/main.js) | Main process: IPC, file watch, bot spawn, log rotation |
+| [dashboard/preload.js](dashboard/preload.js) | Context bridge — `window.api` |
+| [dashboard/renderer.js](dashboard/renderer.js) | All UI logic |
+| [dashboard/index.html](dashboard/index.html) | UI shell |
+| [dashboard/styles.css](dashboard/styles.css) | Dark theme (CSS variables, grid layout) |
+| [dashboard/package.json](dashboard/package.json) | `electron ^33.0.0` devDependency |
+| [run-dashboard.bat](run-dashboard.bat) | Windows launcher — uses cached Electron binary if installed |
+
+### Dashboard Known Issues / Fixed Bugs
+
+- **Path with spaces**: Bot root `my repos/polymarket_bot` contains a space. `shell: true` + exe path breaks on Windows CMD. Fixed by using `shell: false` for direct exe execution.
+- **FileShare**: .NET `StreamWriter` default opens with `FileShare.None`, blocking dashboard reads. Fixed in `Program.cs:77` with `new FileStream(..., FileShare.ReadWrite)`.
+- **Stale exe**: After .NET source changes, must `dotnet build -c Debug` from `dotnet/PolymarketBot/` before restarting. Dashboard runs the compiled exe directly; rebuilding requires killing the running process first.
+- **7-decimal timestamps**: .NET `DateTime.ToString("o")` produces 7 fractional-second digits. Handled by `parseTs()` normalization in renderer.
