@@ -182,6 +182,43 @@ class Notifier:
             f"Time: {_now()}",
         )
 
+    def notify_buy_fail(self, market, signal, reason: str) -> None:
+        self.send(
+            f"BUY FAILED {signal.side.value} ${signal.position_size_usd:.2f} — {market.question[:60]}",
+            f"BUY order failed.\n\n"
+            f"Market: {market.question}\n"
+            f"Side: {signal.side.value}\n"
+            f"Attempted price: {signal.market_price:.4f}\n"
+            f"Attempted size: ${signal.position_size_usd:.2f}\n"
+            f"Edge: {signal.edge:.1%}\n"
+            f"Reason: {reason}\n"
+            f"Time: {_now()}",
+        )
+
+    def notify_sell_fail(self, position, exit_reason: str, fail_reason: str) -> None:
+        self.send(
+            f"SELL FAILED ({exit_reason}) — {position.question[:60]}",
+            f"SELL order failed.\n\n"
+            f"Market: {position.question}\n"
+            f"Exit reason: {exit_reason}\n"
+            f"Attempted price: {position.current_price:.4f}\n"
+            f"Shares: {position.shares:.2f}\n"
+            f"Reason: {fail_reason}\n"
+            f"Time: {_now()}",
+        )
+
+    def notify_topup_sell_fail(self, tc, fail_reason: str) -> None:
+        self.send(
+            f"TOPUP+SELL FAILED ({tc.exit_reason}) — {tc.position.question[:55]}",
+            f"Top-up-and-sell failed.\n\n"
+            f"Market: {tc.position.question}\n"
+            f"Exit reason: {tc.exit_reason}\n"
+            f"Current tokens: {tc.position.shares:.2f}\n"
+            f"Top-up cost: ${tc.topup_cost:.2f}\n"
+            f"Reason: {fail_reason}\n"
+            f"Time: {_now()}",
+        )
+
     def notify_error(self, cycle: int, error: Exception) -> None:
         self.send(
             f"Error in cycle {cycle}",

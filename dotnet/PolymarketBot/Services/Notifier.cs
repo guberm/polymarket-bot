@@ -164,6 +164,37 @@ public sealed class Notifier
             $"Time: {Now()}");
     }
 
+    public void NotifyBuyFail(MarketInfo market, Signal signal, string reason) =>
+        Send($"BUY FAILED {signal.Side} ${signal.PositionSizeUsd:F2} — {Truncate(market.Question, 60)}",
+            $"BUY order failed.\n\n" +
+            $"Market: {market.Question}\n" +
+            $"Side: {signal.Side}\n" +
+            $"Attempted price: {signal.MarketPrice:F4}\n" +
+            $"Attempted size: ${signal.PositionSizeUsd:F2}\n" +
+            $"Edge: {signal.Edge:P1}\n" +
+            $"Reason: {reason}\n" +
+            $"Time: {Now()}");
+
+    public void NotifySellFail(Position position, string exitReason, string failReason) =>
+        Send($"SELL FAILED ({exitReason}) — {Truncate(position.Question, 60)}",
+            $"SELL order failed.\n\n" +
+            $"Market: {position.Question}\n" +
+            $"Exit reason: {exitReason}\n" +
+            $"Attempted price: {position.CurrentPrice:F4}\n" +
+            $"Shares: {position.Shares:F2}\n" +
+            $"Reason: {failReason}\n" +
+            $"Time: {Now()}");
+
+    public void NotifyTopupSellFail(TopupCandidate tc, string failReason) =>
+        Send($"TOPUP+SELL FAILED ({tc.ExitReason}) — {Truncate(tc.Position.Question, 55)}",
+            $"Top-up-and-sell failed.\n\n" +
+            $"Market: {tc.Position.Question}\n" +
+            $"Exit reason: {tc.ExitReason}\n" +
+            $"Current tokens: {tc.Position.Shares:F2}\n" +
+            $"Top-up cost: ${tc.TopupCost:F2}\n" +
+            $"Reason: {failReason}\n" +
+            $"Time: {Now()}");
+
     public void NotifyError(int cycle, Exception ex) =>
         Send($"Error in cycle {cycle}",
             $"An error occurred in cycle {cycle}.\n\n" +

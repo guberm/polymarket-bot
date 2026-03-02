@@ -308,6 +308,7 @@ def main():
                     if con:
                         print(f"[{ts()}]     {GREEN}SOLD OK{RESET}")
                 else:
+                    notifier.notify_sell_fail(es.position, es.exit_reason, "below CLOB minimum or order not filled")
                     if con:
                         print(f"[{ts()}]     {RED}SELL FAILED (min 5 tokens or order not filled){RESET}")
 
@@ -357,6 +358,7 @@ def main():
                     if con:
                         print(f"[{ts()}]     {GREEN}TOPUP+SELL OK (freed ${tc.recovery_value:.2f}){RESET}")
                 else:
+                    notifier.notify_topup_sell_fail(tc, "order not filled")
                     if con:
                         print(f"[{ts()}]     {RED}TOPUP+SELL FAILED{RESET}")
 
@@ -535,6 +537,7 @@ def main():
                     )
                 else:
                     log.warning(f"  [{i}/{len(eligible)}] TRADE FAILED: order execution error")
+                    notifier.notify_buy_fail(market, signal_obj, "order execution error")
                     if con:
                         print(f"[{ts()}]   [{i:>2}/{len(eligible)}] {RED}TRADE FAILED{RESET}")
 

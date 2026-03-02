@@ -404,6 +404,7 @@ while (!cts.Token.IsCancellationRequested)
             }
             else
             {
+                notifier.NotifySellFail(es.Position, es.ExitReason, "below CLOB minimum or order not filled");
                 Con($"    {RED}SELL FAILED (min 5 tokens or order not filled){RESET}");
             }
         }
@@ -461,6 +462,7 @@ while (!cts.Token.IsCancellationRequested)
             }
             else
             {
+                notifier.NotifyTopupSellFail(tc, "order not filled");
                 Con($"    {RED}TOPUP+SELL FAILED{RESET}");
             }
         }
@@ -667,6 +669,7 @@ while (!cts.Token.IsCancellationRequested)
             else
             {
                 log.LogWarning("  {Idx} TRADE FAILED: order execution error", idx);
+                notifier.NotifyBuyFail(market, signal, "order execution error");
                 Con($"  {idx} {RED}TRADE FAILED{RESET}");
             }
         }
