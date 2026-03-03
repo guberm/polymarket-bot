@@ -473,10 +473,10 @@ Key functions:
 - `findDataDir()` — looks for `../data` relative to `dashboard/`, falls back to `userData/data`
 - `getBotRoot()` — `path.dirname(dataDir)` — project root
 - `getConfigPath()` — `botRoot/polymarket_bot_config.json`
-- `setupFileWatcher()` — watches `data/` dir for changes to `portfolio.json`, `trades.jsonl`, `bot.log`; sends `file-changed` IPC event to renderer
+- `setupFileWatcher()` — watches `data/` dir for changes to `portfolio.json`, `trades.jsonl`, `bot.log`; includes **300ms debounce** per file and handles `name === null` (Windows sometimes omits filename); sends `file-changed` IPC event to renderer
 - `readLines(file, n)` — reads last N lines of a JSONL file; non-JSON lines get `timestamp: new Date().toISOString()`
 
-**IPC handlers**: `get-data-dir`, `set-data-dir`, `browse-data-dir`, `read-portfolio`, `read-trades`, `read-logs`, `read-config`, `write-config`, `bot-status`, `start-bot`, `stop-bot`, `save-file`
+**IPC handlers**: `get-data-dir`, `set-data-dir`, `browse-data-dir`, `read-portfolio`, `read-trades`, `read-logs`, `read-config`, `write-config`, `bot-status`, `start-bot`, `stop-bot`, `save-file`, `open-logs-dir`
 
 **start-bot handler**:
 
@@ -498,11 +498,12 @@ Key functions:
 - `posSort`, `tradesSort = { col, dir }` — sort state for each table
 - `hiddenCategories = new Set()` — category filter state
 - `catColorCache` — stable category → color mapping
+- `currentLang` — `localStorage.getItem('lang') || 'ru'`
 
 **Key functions**:
 
-- `init()` — bootstraps: get data dir, init charts, first refresh, start 8s interval, wire IPC listeners
-- `refresh()` — reads portfolio + trades + logs in parallel, renders all sections
+- `init()` — bootstraps: get data dir, calls `initLang()`, `initTooltips()`, then `initCharts()`, first refresh, start 8s interval, wire IPC listeners
+- `refresh()` — reads portfolio + trades + logs in parallel, renders all sections; **bug fix**: destructures result as `[p, tr, l]` (was `[p, t, l]` which shadowed the global `t()` translation function, causing TypeError on every call)
 - `initCharts()` — creates Chart.js instances with `animation: false` and `responsive: true`
 - `renderPnlChart()` / `renderCatChart()` — update data in-place, call `chart.update('none')` (no flicker)
 - `renderCategoryFilters()` — renders filter pills; click toggles `hiddenCategories`; pill has colored dot
@@ -515,7 +516,23 @@ Key functions:
 - `parseTs(ts)` — normalizes timestamps before `new Date()`: strips extra fractional-second digits (handles .NET's 7-decimal `ToString("o")`)
 - `exportLog()` — filters both `logs` and `extraLogLines` by `logClearedAt`, sorts, exports via `save-file` IPC
 - `confirmStart()` — saves mode/flags to localStorage, resets log state (`logClearedAt=0, logs=[], extraLogLines=[]`), starts bot
-- `openConfig()` / `saveConfig()` — reads/writes `polymarket_bot_config.json` via IPC; renders form from `CONFIG_SCHEMA`
+- `applyLang()` — updates all `[data-i18n]` elements; preserves child elements (tip icons, sort-ind spans) by updating first text node only instead of `innerHTML`; also calls `applyTips()`
+- `applyTips()` — sets `data-tip` attribute on all `.tip-icon[data-tip-key]` elements from current language's `tips` dict
+- `initLang()` — reads `localStorage.lang`, wires RU/EN toggle button, calls `applyLang()` + re-renders on switch
+- `initTheme()` — reads `localStorage.theme`, toggles `body.light` class, wires 🌙/☀ button
+- `initTooltips()` — creates a single `.tooltip-popup` div appended to `<body>`; uses `position: fixed` + `getBoundingClientRect()` for positioning; event delegation via `mouseover`/`mouseout` on `.tip-icon[data-tip]` elements. Avoids `overflow: hidden` clipping that breaks CSS `::after` pseudo-element tooltips.
+- `openConfig()` / `saveConfig()` — reads/writes `polymarket_bot_config.json` via IPC; renders form from `CONFIG_SCHEMA`; language-aware: uses `s.ru`/`f.ru` from `CONFIG_SCHEMA` when `currentLang === 'ru'`
+- `fmtTime` — uses `ru-RU` locale when `currentLang === 'ru'`, `en-US` otherwise
+
+**i18n System**:
+
+- `TRANS = { ru: {...}, en: {...} }` — all UI strings in both languages. Values can be plain strings or functions for parameterized strings (e.g., `subInitial: v => \`нач. \${v}\``).
+- `t(key, ...args)` — returns `TRANS[currentLang][key]`, falls back to `en`; calls it if a function.
+- `TRANS[lang].tips` — sub-object with tooltip texts for all 13 sections/stats.
+- `data-i18n="key"` attributes on HTML elements — updated by `applyLang()`.
+- `data-tip-key="key"` on `.tip-icon` spans — `data-tip` attribute set by `applyTips()`.
+- Language persists in `localStorage.lang`; theme persists in `localStorage.theme`.
+- `applyLang()` uses text-node update (not `innerHTML`) to preserve child elements.
 
 **Log isolation pattern**:
 
@@ -541,7 +558,7 @@ parseTs(l.timestamp) > logClearedAt  // only show post-clear entries
 | [dashboard/preload.js](dashboard/preload.js) | Context bridge — `window.api` |
 | [dashboard/renderer.js](dashboard/renderer.js) | All UI logic |
 | [dashboard/index.html](dashboard/index.html) | UI shell |
-| [dashboard/styles.css](dashboard/styles.css) | Dark theme (CSS variables, grid layout) |
+| [dashboard/styles.css](dashboard/styles.css) | Dark/light themes, tooltip styles (CSS variables, grid layout) |
 | [dashboard/package.json](dashboard/package.json) | `electron ^33.0.0` devDependency |
 | [run-dashboard.bat](run-dashboard.bat) | Windows launcher — uses cached Electron binary if installed |
 
@@ -551,3 +568,6 @@ parseTs(l.timestamp) > logClearedAt  // only show post-clear entries
 - **FileShare**: .NET `StreamWriter` default opens with `FileShare.None`, blocking dashboard reads. Fixed in `Program.cs:77` with `new FileStream(..., FileShare.ReadWrite)`.
 - **Stale exe**: After .NET source changes, must `dotnet build -c Debug` from `dotnet/PolymarketBot/` before restarting. Dashboard runs the compiled exe directly; rebuilding requires killing the running process first.
 - **7-decimal timestamps**: .NET `DateTime.ToString("o")` produces 7 fractional-second digits. Handled by `parseTs()` normalization in renderer.
+- **`t` variable shadowing**: `refresh()` destructured `[p, t, l]` where `t` shadowed the global `t()` translation function, causing TypeError on every call (timestamp display never updated). Fixed by renaming to `[p, tr, l]`.
+- **File watcher on Windows**: `fs.watch` sometimes delivers `name = null` (filename not provided). Added `name === null` fallback + 300ms debounce per file to prevent event flooding.
+- **CSS tooltip clipping**: CSS `::after` pseudo-element tooltips are clipped by ancestor `overflow: hidden`. Fixed by using a JS-positioned `<div class="tooltip-popup">` appended to `<body>` with `position: fixed`.

@@ -1,5 +1,201 @@
 'use strict'
 
+// ── Translations ──────────────────────────────────────────────────────────
+const TRANS = {
+  ru: {
+    // Header
+    statusStopped: 'ОСТАНОВЛЕН', statusRunning: 'РАБОТАЕТ', statusHalted: 'ЗАМОРОЖЕН',
+    configBtn: '⚙ Настройки', startBtn: '▶ Запуск', stopBtn: '■ Стоп',
+    updatedAt: v => `обновлено ${v}`,
+    // Stats subs
+    freeCash: 'СВОБОДНЫЕ СРЕДСТВА', portfolioValue: 'СТОИМОСТЬ ПОРТФЕЛЯ',
+    realizedPnl: 'РЕАЛИЗОВАННАЯ П/У', unrealizedPnl: 'НЕРЕАЛИЗОВАННАЯ П/У',
+    drawdown: 'ПРОСАДКА', winRate: 'ДОЛЯ ПОБЕД',
+    subInitial: v => `нач. ${v}`,
+    subDeployed: v => `${v} в позициях`,
+    subTrades: n => `${n} сделок всего`,
+    subOpen: n => `${n} открыто`,
+    subHwm: v => `пик ${v}`,
+    subClosed: (w, t) => `${w} / ${t} закрыто`,
+    // Sections
+    openPositions: 'ОТКРЫТЫЕ ПОЗИЦИИ', tradeHistory: 'ИСТОРИЯ СДЕЛОК',
+    cumulativePnl: 'НАКОПЛЕННАЯ П/У', exposureByCategory: 'ПОЗИЦИИ ПО КАТЕГОРИЯМ',
+    riskLimits: 'ЛИМИТЫ РИСКА', exitBreakdown: 'ПРИЧИНЫ ВЫХОДА', liveLog: 'ЖУРНАЛ',
+    // Log controls
+    autoScroll: 'авто-прокрутка', folderBtn: '📂 папка', exportBtn: '⬇ экспорт', clearBtn: '✕ очистить',
+    // Config modal
+    configTitle: '⚙ Настройки', saveBtn: '💾 Сохранить', browseBtn: 'Обзор', dataDirLabel: 'Папка данных: ',
+    // Start modal
+    startModalTitle: '▶ Запуск бота', implLabel: 'Реализация', flagsLabel: 'Флаги', launchBtn: '▶ Запустить',
+    // Table headers
+    colMarket: 'РЫНОК', colSide: 'СТОРОНА', colEntry: 'ВХОД', colCurrent: 'ТЕКУЩАЯ',
+    colFair: 'ОЦ. СТОИМ.', colShares: 'ТОКЕНЫ', colCost: 'ЗАТРАТЫ', colValue: 'СТОИМОСТЬ',
+    colPnlUsd: 'П/У $', colPnlPct: 'П/У %', colEdge: 'ПРЕИМУЩ.', colCategory: 'КАТЕГОРИЯ', colAge: 'ВОЗРАСТ',
+    colTime: 'ВРЕМЯ', colAction: 'ДЕЙСТВИЕ', colPrice: 'ЦЕНА', colSize: 'ОБЪЁМ',
+    colKelly: 'КЕЛЛИ', colExit: 'ВЫХОД', colPaper: 'ТЕСТ',
+    // Empty states
+    emptyPositions: 'Нет открытых позиций', emptyTrades: 'Сделок пока нет',
+    emptyWaiting: 'Ожидание…', emptyNoTrades: 'Нет завершённых сделок',
+    noData: 'Нет данных — ожидание portfolio.json',
+    // Risk meters
+    riskTotalExposure: 'Общие позиции', riskLargestPos: 'Крупнейшая позиция',
+    riskDailyLoss: 'Дневные убытки', riskMaxDD: 'Макс. просадка',
+    riskFreeCash: 'Свободные средства', riskPositions: 'Открытых позиций',
+    // Exit reasons
+    exitStopLoss: 'Стоп-лосс', exitTakeProfit: 'Тейк-профит', exitEdgeGone: 'Грань ушла',
+    exitResolvedWon: 'Победа', exitResolvedLost: 'Поражение',
+    exitTopUpSell: 'Топап-продажа', exitReestimate: 'Переоценка',
+    // Bot messages
+    botStarted: (pid, mode) => `Бот запущен (PID ${pid}, режим: ${mode})`,
+    botStopped: code => `Бот завершён (код ${code})`,
+    startError: e => `Ошибка запуска: ${e}`,
+    // Tooltips
+    tips: {
+      tipFreeCash:       'Свободные USDC на счёте, не вложенные в позиции.\nОбновляется каждый цикл через синхронизацию баланса с блокчейном.',
+      tipPortfolioValue: 'Bankroll + текущая стоимость открытых позиций по рыночной цене.\nЭта сумма используется для проверки лимитов риска.',
+      tipRealizedPnl:    'Суммарная прибыль/убыток по всем закрытым позициям:\nпродажи, стоп-лоссы, тейк-профиты, разрешённые рынки.',
+      tipUnrealizedPnl:  'Бумажная прибыль/убыток по открытым позициям.\nТекущая рыночная цена × токены − затраты на вход.',
+      tipDrawdown:       'Текущее снижение от исторического максимума портфеля.\nБот останавливается при превышении лимита max drawdown.',
+      tipWinRate:        'Доля закрытых позиций, принёсших прибыль.\nУчитываются только полностью закрытые позиции.',
+      tipPositions:      'Рынки, где бот держит токены YES или NO.\nЕсть сортировка по любому столбцу. Фильтрация по категориям — через пилюли выше.',
+      tipCumPnl:         'Накопленная реализованная прибыль/убыток по закрытым сделкам.\nКаждая точка — момент закрытия позиции (SELL).\nНереализованный P&L открытых позиций не учитывается.',
+      tipCatChart:       'Распределение вложенного капитала по категориям рынков.\nОснован на стоимости входа в открытые позиции.',
+      tipTrades:         'Все ордера BUY и SELL, исполненные ботом.\nВключает цену, долю Келли и причину выхода.\nПоследние 500 сделок, сортировка по любому столбцу.',
+      tipRisk:           'Текущие метрики риска относительно настроенных лимитов.\nПолоска краснеет при превышении лимита.\nЛимиты настраиваются в ⚙ Настройках.',
+      tipExit:           'Распределение причин закрытия позиций:\nстоп-лосс — цена упала > 30% от входа\nтейк-профит — цена ≥ 95¢\nedge gone — рынок прошёл оценку бота\nresolved — рынок завершился',
+      tipLog:            'Вывод запущенного бота в реальном времени.\nПри каждом новом запуске лог ротируется в отдельный файл.',
+    },
+  },
+  en: {
+    statusStopped: 'STOPPED', statusRunning: 'RUNNING', statusHalted: 'HALTED',
+    configBtn: '⚙ Config', startBtn: '▶ Start Bot', stopBtn: '■ Stop Bot',
+    updatedAt: v => `updated ${v}`,
+    freeCash: 'FREE CASH', portfolioValue: 'PORTFOLIO VALUE',
+    realizedPnl: 'REALIZED P&L', unrealizedPnl: 'UNREALIZED P&L',
+    drawdown: 'DRAWDOWN', winRate: 'WIN RATE',
+    subInitial: v => `initial ${v}`,
+    subDeployed: v => `${v} deployed`,
+    subTrades: n => `${n} total trades`,
+    subOpen: n => `${n} open`,
+    subHwm: v => `hwm ${v}`,
+    subClosed: (w, t) => `${w} / ${t} closed`,
+    openPositions: 'OPEN POSITIONS', tradeHistory: 'TRADE HISTORY',
+    cumulativePnl: 'CUMULATIVE P&L', exposureByCategory: 'EXPOSURE BY CATEGORY',
+    riskLimits: 'RISK LIMITS', exitBreakdown: 'EXIT BREAKDOWN', liveLog: 'LIVE LOG',
+    autoScroll: 'auto-scroll', folderBtn: '📂 folder', exportBtn: '⬇ export', clearBtn: '✕ clear',
+    configTitle: '⚙ Configuration', saveBtn: '💾 Save', browseBtn: 'Browse', dataDirLabel: 'Data dir: ',
+    startModalTitle: '▶ Start Bot', implLabel: 'Implementation', flagsLabel: 'Flags', launchBtn: '▶ Launch',
+    colMarket: 'MARKET', colSide: 'SIDE', colEntry: 'ENTRY', colCurrent: 'CURRENT',
+    colFair: 'FAIR EST.', colShares: 'SHARES', colCost: 'COST', colValue: 'VALUE',
+    colPnlUsd: 'P&L $', colPnlPct: 'P&L %', colEdge: 'EDGE', colCategory: 'CATEGORY', colAge: 'AGE',
+    colTime: 'TIME', colAction: 'ACTION', colPrice: 'PRICE', colSize: 'SIZE',
+    colKelly: 'KELLY', colExit: 'EXIT', colPaper: 'PAPER',
+    emptyPositions: 'No open positions', emptyTrades: 'No trades yet',
+    emptyWaiting: 'Waiting…', emptyNoTrades: 'No closed trades yet',
+    noData: 'No data — waiting for portfolio.json',
+    riskTotalExposure: 'Total Exposure', riskLargestPos: 'Largest Position',
+    riskDailyLoss: 'Daily P&L Loss', riskMaxDD: 'Max Drawdown',
+    riskFreeCash: 'Free Cash', riskPositions: 'Positions Open',
+    exitStopLoss: 'stop loss', exitTakeProfit: 'take profit', exitEdgeGone: 'edge gone',
+    exitResolvedWon: 'resolved won', exitResolvedLost: 'resolved lost',
+    exitTopUpSell: 'top up sell', exitReestimate: 'reestimate exit',
+    botStarted: (pid, mode) => `Bot started (PID ${pid}, mode: ${mode})`,
+    botStopped: code => `Bot process exited (code ${code})`,
+    startError: e => `Failed to start: ${e}`,
+    // Tooltips
+    tips: {
+      tipFreeCash:       'Free USDC on your account, not yet deployed in positions.\nUpdated every cycle via on-chain balance sync.',
+      tipPortfolioValue: 'Bankroll + current value of all open positions at mid-price.\nThis is what all risk limits are measured against.',
+      tipRealizedPnl:    'Total profit/loss from all closed positions:\nsells, stop-losses, take-profits, resolved markets.',
+      tipUnrealizedPnl:  'Paper profit/loss on currently open positions.\nMid-price × shares − entry cost.',
+      tipDrawdown:       'Current portfolio decline from its all-time peak value.\nBot halts when drawdown exceeds the max drawdown limit.',
+      tipWinRate:        'Percentage of closed positions that were profitable.\nOnly counts fully closed positions.',
+      tipPositions:      'Markets where the bot holds YES or NO shares.\nClick any column header to sort. Use category pills above to filter.',
+      tipCumPnl:         'Running total of realized P&L from closed trades over time.\nEach point marks a position close (SELL).\nDoes not include unrealized gains on open positions.',
+      tipCatChart:       'Current capital deployed broken down by market category.\nBased on entry cost of open positions.',
+      tipTrades:         'All BUY and SELL orders executed by the bot.\nShows price, Kelly fraction, and exit reason.\nLast 500 trades, sortable by any column.',
+      tipRisk:           'Real-time risk meters vs configured limits.\nBar turns red when a limit is breached.\nAdjust limits in ⚙ Config.',
+      tipExit:           'Breakdown of why closed positions were exited:\nstop-loss — price dropped > 30% from entry\ntake-profit — price reached ≥ 95¢\nedge gone — market price passed bot\'s fair estimate\nresolved — market settled',
+      tipLog:            'Live output from the running bot process.\nRotated to a new timestamped file on each bot start.',
+    },
+  },
+}
+
+let currentLang = localStorage.getItem('lang') || 'ru'
+
+function t(key, ...args) {
+  const val = TRANS[currentLang]?.[key] ?? TRANS.en[key]
+  return typeof val === 'function' ? val(...args) : (val ?? key)
+}
+
+function applyLang() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.dataset.i18n
+    const val = t(key)
+    const suffix = el.tagName === 'TH' ? ' ' : ''
+    // Preserve child elements (tip icons, sort indicators) — update only the leading text node
+    const firstText = [...el.childNodes].find(n => n.nodeType === 3)
+    if (firstText) {
+      firstText.textContent = val + suffix
+    } else {
+      el.insertBefore(document.createTextNode(val + suffix), el.firstChild)
+    }
+  })
+  applyTips()
+  // Language button shows the OTHER language (what you'd switch TO)
+  const btn = document.getElementById('btn-lang')
+  if (btn) btn.textContent = currentLang === 'ru' ? 'EN' : 'RU'
+}
+
+function applyTips() {
+  const tipDict = TRANS[currentLang]?.tips ?? TRANS.en.tips
+  document.querySelectorAll('.tip-icon[data-tip-key]').forEach(el => {
+    const text = tipDict[el.dataset.tipKey]
+    if (text) el.dataset.tip = text
+  })
+}
+
+// ── Floating tooltip (position:fixed — not clipped by overflow:hidden) ────
+function initTooltips() {
+  const popup = document.createElement('div')
+  popup.className = 'tooltip-popup hidden'
+  document.body.appendChild(popup)
+
+  let hideTimer = null
+
+  document.addEventListener('mouseover', e => {
+    const icon = e.target.closest('.tip-icon[data-tip]')
+    if (!icon) return
+    clearTimeout(hideTimer)
+    popup.textContent = icon.dataset.tip
+    popup.classList.remove('hidden')
+
+    // Position: prefer above, fall back to below if near top of viewport
+    const rect = icon.getBoundingClientRect()
+    const TIP_W = 240, GAP = 8
+    let left = rect.left + rect.width / 2 - TIP_W / 2
+    left = Math.max(8, Math.min(left, window.innerWidth - TIP_W - 8))
+    popup.style.left = left + 'px'
+    popup.style.width = TIP_W + 'px'
+
+    // Measure height after content set, then decide above/below
+    popup.style.top = '-9999px'
+    requestAnimationFrame(() => {
+      const ph = popup.offsetHeight
+      const above = rect.top - ph - GAP
+      popup.style.top = (above >= 4 ? above : rect.bottom + GAP) + 'px'
+      popup.classList.add('visible')
+    })
+  })
+
+  document.addEventListener('mouseout', e => {
+    const icon = e.target.closest('.tip-icon[data-tip]')
+    if (!icon) return
+    popup.classList.remove('visible')
+    hideTimer = setTimeout(() => popup.classList.add('hidden'), 150)
+  })
+}
+
 // ── State ─────────────────────────────────────────────────────────────────
 let portfolio = null
 let trades = []
@@ -42,6 +238,9 @@ async function init() {
   document.getElementById('data-dir-label').textContent = dataDir
   document.getElementById('cfg-datadir-val').textContent = dataDir
 
+  initTheme()
+  initLang()
+  initTooltips()
   initCharts()
   await refresh()
 
@@ -57,7 +256,7 @@ async function init() {
   })
   api.onBotStopped(({ code }) => {
     botRunning = false; updateBotStatusBadge()
-    appendLogLine({ level: 'WARNING', message: `Bot process exited (code ${code})`, timestamp: new Date().toISOString() })
+    appendLogLine({ level: 'WARNING', message: t('botStopped', code), timestamp: new Date().toISOString() })
   })
 
   const status = await api.botStatus()
@@ -71,9 +270,9 @@ async function init() {
 
 // ── Main refresh ──────────────────────────────────────────────────────────
 async function refresh() {
-  const [p, t, l] = await Promise.all([api.readPortfolio(), api.readTrades(), api.readLogs(200)])
+  const [p, tr, l] = await Promise.all([api.readPortfolio(), api.readTrades(), api.readLogs(200)])
   portfolio = p
-  trades = t || []
+  trades = tr || []
   logs = l || []
 
   renderStats()
@@ -85,7 +284,7 @@ async function refresh() {
   renderTrades()
   renderLog()
 
-  document.getElementById('last-updated').textContent = 'updated ' + new Date().toLocaleTimeString()
+  document.getElementById('last-updated').textContent = t('updatedAt', new Date().toLocaleTimeString())
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -99,7 +298,7 @@ const fmtAge = ts => {
   if (s < 86400) return `${Math.floor(s/3600)}h`
   return `${Math.floor(s/86400)}d`
 }
-const fmtTime = ts => new Date(ts * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+const fmtTime = ts => new Date(ts * 1000).toLocaleString(currentLang === 'ru' ? 'ru-RU' : 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 const clamp01 = v => Math.min(100, Math.max(0, v))
 const colorClass = v => v > 0 ? 'positive' : v < 0 ? 'negative' : 'neutral'
 function setEl(id, html, cls) {
@@ -123,28 +322,28 @@ function renderStats() {
   const winRate = closedCount > 0 ? won / closedCount : 0
 
   setEl('val-bankroll', fmtUsd(bankroll), bankroll < 1 ? 'negative' : bankroll < 5 ? 'warning' : 'neutral')
-  setEl('sub-bankroll', `initial ${fmtUsd(initial_bankroll)}`)
+  setEl('sub-bankroll', t('subInitial', fmtUsd(initial_bankroll)))
   $('bar-bankroll').style.width = clamp01(bankroll / initial_bankroll * 100) + '%'
 
   setEl('val-portval', fmtUsd(portVal))
-  setEl('sub-portval', `${fmtUsd(totalExposure)} deployed`)
+  setEl('sub-portval', t('subDeployed', fmtUsd(totalExposure)))
   $('bar-exposure').style.width = clamp01(portVal > 0 ? totalExposure / portVal * 100 : 0) + '%'
 
   setEl('val-realized', fmt$(total_realized_pnl), colorClass(total_realized_pnl))
-  setEl('sub-realized', `${total_trades} total trades`)
+  setEl('sub-realized', t('subTrades', total_trades))
 
   setEl('val-unrealized', fmt$(unrealPnl), colorClass(unrealPnl))
-  setEl('sub-unrealized', `${positions.length} open`)
+  setEl('sub-unrealized', t('subOpen', positions.length))
 
   const ddPct = drawdownPct * 100
   setEl('val-drawdown', `${ddPct.toFixed(1)}%`, ddPct > 30 ? 'negative' : ddPct > 15 ? 'warning' : 'neutral')
-  setEl('sub-drawdown', `hwm ${fmtUsd(high_water_mark)}`)
+  setEl('sub-drawdown', t('subHwm', fmtUsd(high_water_mark)))
   const ddBar = $('bar-drawdown')
   ddBar.style.width = clamp01(ddPct / 50 * 100) + '%'
   ddBar.className = ddPct < 15 ? 'stat-bar bar-green' : ddPct < 30 ? 'stat-bar bar-amber' : 'stat-bar bar-red'
 
   setEl('val-winrate', closedCount > 0 ? `${(winRate * 100).toFixed(1)}%` : '—', winRate >= 0.5 ? 'positive' : winRate >= 0.35 ? 'warning' : closedCount > 0 ? 'negative' : 'neutral')
-  setEl('sub-winrate', `${won} / ${closedCount} closed`)
+  setEl('sub-winrate', t('subClosed', won, closedCount))
   $('bar-winrate').style.width = clamp01(winRate * 100) + '%'
 
   $('halted-badge').classList.toggle('hidden', !is_halted)
@@ -217,7 +416,7 @@ function getPosVal(p, col) {
 function renderPositions() {
   const tbody = $('positions-body')
   if (!portfolio?.positions?.length) {
-    tbody.innerHTML = '<tr><td colspan="13" class="empty-msg">No open positions</td></tr>'
+    tbody.innerHTML = `<tr><td colspan="13" class="empty-msg">${t('emptyPositions')}</td></tr>`
     $('positions-count').textContent = '0'
     return
   }
@@ -292,7 +491,7 @@ function initSortHeaders() {
 // ── Risk meters ───────────────────────────────────────────────────────────
 function renderRiskMeters() {
   const container = $('risk-container')
-  if (!portfolio) { container.innerHTML = '<div class="muted small" style="padding:10px">Waiting…</div>'; return }
+  if (!portfolio) { container.innerHTML = `<div class="muted small" style="padding:10px">${t('emptyWaiting')}</div>`; return }
   const { bankroll, positions = [], high_water_mark, daily_start_value } = portfolio
   const totalExposure = positions.reduce((s, p) => s + p.shares * p.current_price, 0)
   const portVal = bankroll + totalExposure
@@ -301,12 +500,12 @@ function renderRiskMeters() {
   const dailyLoss = daily_start_value > 0 ? Math.max(0, (daily_start_value - portVal) / daily_start_value) : 0
 
   const metrics = [
-    { label: 'Total Exposure',   val: portVal > 0 ? totalExposure / portVal : 0, limit: 1.00, fmt: v => `${(v*100).toFixed(0)}% / 100%` },
-    { label: 'Largest Position', val: portVal > 0 ? maxPos / portVal : 0,         limit: 0.15, fmt: v => `${(v*100).toFixed(1)}% / 15%` },
-    { label: 'Daily P&L Loss',   val: dailyLoss,                                   limit: 0.20, fmt: v => `${(v*100).toFixed(1)}% / 20%` },
-    { label: 'Max Drawdown',     val: drawdown,                                    limit: 0.50, fmt: v => `${(v*100).toFixed(1)}% / 50%` },
-    { label: 'Free Cash',        val: portVal > 0 ? bankroll / portVal : 0,        limit: null, fmt: () => `${fmtUsd(bankroll)} / ${fmtUsd(portVal)}` },
-    { label: 'Positions Open',   val: positions.length / 20,                      limit: null, fmt: () => `${positions.length} / 20` },
+    { label: t('riskTotalExposure'), val: portVal > 0 ? totalExposure / portVal : 0, limit: 1.00, fmt: v => `${(v*100).toFixed(0)}% / 100%` },
+    { label: t('riskLargestPos'),   val: portVal > 0 ? maxPos / portVal : 0,         limit: 0.15, fmt: v => `${(v*100).toFixed(1)}% / 15%` },
+    { label: t('riskDailyLoss'),    val: dailyLoss,                                   limit: 0.20, fmt: v => `${(v*100).toFixed(1)}% / 20%` },
+    { label: t('riskMaxDD'),        val: drawdown,                                    limit: 0.50, fmt: v => `${(v*100).toFixed(1)}% / 50%` },
+    { label: t('riskFreeCash'),     val: portVal > 0 ? bankroll / portVal : 0,        limit: null, fmt: () => `${fmtUsd(bankroll)} / ${fmtUsd(portVal)}` },
+    { label: t('riskPositions'),    val: positions.length / 20,                       limit: null, fmt: () => `${positions.length} / 20` },
   ]
 
   container.innerHTML = metrics.map(m => {
@@ -330,15 +529,16 @@ const EXIT_COLORS = { stop_loss:'#ef4444', take_profit:'#10b981', edge_gone:'#f5
 function renderExitBreakdown() {
   const container = $('exit-stats')
   const sells = trades.filter(t => t.action === 'SELL' && t.exit_reason)
-  if (!sells.length) { container.innerHTML = '<div class="muted small" style="padding:8px">No closed trades yet</div>'; return }
+  if (!sells.length) { container.innerHTML = `<div class="muted small" style="padding:8px">${t('emptyNoTrades')}</div>`; return }
   const counts = {}
   sells.forEach(t => { const r = t.exit_reason || 'unknown'; counts[r] = (counts[r] || 0) + 1 })
   const total = sells.length
   container.innerHTML = Object.entries(counts).sort((a,b) => b[1]-a[1]).map(([reason, count]) => {
     const pct = count / total
     const color = EXIT_COLORS[reason] || '#4a5f7a'
+    const EXIT_LABELS = { stop_loss: t('exitStopLoss'), take_profit: t('exitTakeProfit'), edge_gone: t('exitEdgeGone'), resolved_won: t('exitResolvedWon'), resolved_lost: t('exitResolvedLost'), top_up_sell: t('exitTopUpSell'), reestimate_exit: t('exitReestimate') }
     return `<div class="exit-row">
-      <span class="exit-label">${reason.replace(/_/g,' ')}</span>
+      <span class="exit-label">${EXIT_LABELS[reason] || reason.replace(/_/g,' ')}</span>
       <span class="exit-count">${count}</span>
       <span class="exit-pct">${(pct*100).toFixed(0)}%</span>
       <div class="exit-bar-wrap"><div class="exit-bar" style="width:${pct*100}%;background:${color}"></div></div>
@@ -452,7 +652,7 @@ function baseChartOpts(prefix = '') {
 function renderTrades() {
   const tbody = $('trades-body')
   $('trades-count').textContent = trades.length
-  if (!trades.length) { tbody.innerHTML = '<tr><td colspan="11" class="empty-msg">No trades yet</td></tr>'; return }
+  if (!trades.length) { tbody.innerHTML = `<tr><td colspan="11" class="empty-msg">${t('emptyTrades')}</td></tr>`; return }
   let sorted = [...trades]
   if (tradesSort.col) {
     sorted.sort((a, b) => {
@@ -547,11 +747,11 @@ function computeWinRate(tradeList) {
 function updateBotStatusBadge() {
   const badge = $('bot-status-badge'), btn = $('btn-start-stop')
   if (botRunning) {
-    badge.textContent = 'RUNNING'; badge.className = 'badge badge-green'
-    btn.textContent = '■ Stop Bot'; btn.className = 'btn btn-danger'
+    badge.textContent = t('statusRunning'); badge.className = 'badge badge-green'
+    btn.textContent = t('stopBtn'); btn.className = 'btn btn-danger'
   } else {
-    badge.textContent = 'STOPPED'; badge.className = 'badge badge-gray'
-    btn.textContent = '▶ Start Bot'; btn.className = 'btn btn-success'
+    badge.textContent = t('statusStopped'); badge.className = 'badge badge-gray'
+    btn.textContent = t('startBtn'); btn.className = 'btn btn-success'
   }
 }
 
@@ -596,68 +796,68 @@ function dragResize(handle, vertical, onDelta) {
 
 // ── Config modal ──────────────────────────────────────────────────────────
 const CONFIG_SCHEMA = [
-  { section: 'CORE', fields: [
-    { key: 'live_trading',     label: 'Live Trading',     type: 'bool', danger: true },
-    { key: 'initial_bankroll', label: 'Initial Bankroll', type: 'number', step: 1 },
+  { section: 'CORE', ru: 'ОСНОВНОЕ', fields: [
+    { key: 'live_trading',     label: 'Live Trading',     ru: 'Боевой режим',     type: 'bool', danger: true },
+    { key: 'initial_bankroll', label: 'Initial Bankroll', ru: 'Начальный баланс', type: 'number', step: 1 },
   ]},
-  { section: 'API KEYS', fields: [
-    { key: 'anthropic_api_key',         label: 'Anthropic API Key',   type: 'password' },
-    { key: 'polymarket_private_key',    label: 'PK Private Key',      type: 'password' },
-    { key: 'polymarket_funder_address', label: 'Funder Address',      type: 'text' },
-    { key: 'polymarket_api_key',        label: 'CLOB API Key',        type: 'password' },
-    { key: 'polymarket_api_secret',     label: 'CLOB API Secret',     type: 'password' },
-    { key: 'polymarket_api_passphrase', label: 'CLOB Passphrase',     type: 'password' },
-    { key: 'polymarket_chain_id',       label: 'Chain ID',            type: 'number', step: 1 },
-    { key: 'polymarket_signature_type', label: 'Signature Type',      type: 'number', step: 1 },
+  { section: 'API KEYS', ru: 'API КЛЮЧИ', fields: [
+    { key: 'anthropic_api_key',         label: 'Anthropic API Key',   ru: 'Ключ Anthropic API',  type: 'password' },
+    { key: 'polymarket_private_key',    label: 'PK Private Key',      ru: 'Приватный ключ',      type: 'password' },
+    { key: 'polymarket_funder_address', label: 'Funder Address',      ru: 'Адрес фондирования',  type: 'text' },
+    { key: 'polymarket_api_key',        label: 'CLOB API Key',        ru: 'CLOB API ключ',       type: 'password' },
+    { key: 'polymarket_api_secret',     label: 'CLOB API Secret',     ru: 'CLOB API секрет',     type: 'password' },
+    { key: 'polymarket_api_passphrase', label: 'CLOB Passphrase',     ru: 'CLOB пароль',         type: 'password' },
+    { key: 'polymarket_chain_id',       label: 'Chain ID',            ru: 'Chain ID',            type: 'number', step: 1 },
+    { key: 'polymarket_signature_type', label: 'Signature Type',      ru: 'Тип подписи',         type: 'number', step: 1 },
   ]},
-  { section: 'ENDPOINTS', fields: [
-    { key: 'anthropic_api_host',        label: 'Anthropic API Host',  type: 'text' },
-    { key: 'gamma_api_host',            label: 'Gamma API Host',      type: 'text' },
-    { key: 'clob_host',                 label: 'CLOB Host',           type: 'text' },
-    { key: 'exchange_address',          label: 'Exchange Address',    type: 'text' },
-    { key: 'neg_risk_exchange_address', label: 'Neg Risk Exchange',   type: 'text' },
+  { section: 'ENDPOINTS', ru: 'ЭНДПОИНТЫ', fields: [
+    { key: 'anthropic_api_host',        label: 'Anthropic API Host',  ru: 'Хост Anthropic API',  type: 'text' },
+    { key: 'gamma_api_host',            label: 'Gamma API Host',      ru: 'Хост Gamma API',      type: 'text' },
+    { key: 'clob_host',                 label: 'CLOB Host',           ru: 'Хост CLOB',           type: 'text' },
+    { key: 'exchange_address',          label: 'Exchange Address',    ru: 'Адрес биржи',         type: 'text' },
+    { key: 'neg_risk_exchange_address', label: 'Neg Risk Exchange',   ru: 'Neg Risk адрес',      type: 'text' },
   ]},
-  { section: 'SCANNING', fields: [
-    { key: 'scan_interval_minutes',           label: 'Scan Interval (min)',       type: 'number', step: 1 },
-    { key: 'min_liquidity',                   label: 'Min Liquidity ($)',          type: 'number', step: 100 },
-    { key: 'min_volume_24hr',                label: 'Min 24h Volume ($)',         type: 'number', step: 100 },
-    { key: 'min_time_to_resolution_hours',   label: 'Min Time to Resolution (h)', type: 'number', step: 1 },
-    { key: 'min_market_price',               label: 'Min Market Price',           type: 'number', step: 0.01 },
-    { key: 'markets_per_cycle',              label: 'Markets Per Cycle',          type: 'number', step: 1 },
+  { section: 'SCANNING', ru: 'СКАНИРОВАНИЕ', fields: [
+    { key: 'scan_interval_minutes',           label: 'Scan Interval (min)',       ru: 'Интервал сканирования (мин)', type: 'number', step: 1 },
+    { key: 'min_liquidity',                   label: 'Min Liquidity ($)',          ru: 'Мин. ликвидность ($)',        type: 'number', step: 100 },
+    { key: 'min_volume_24hr',                label: 'Min 24h Volume ($)',         ru: 'Мин. объём 24ч ($)',          type: 'number', step: 100 },
+    { key: 'min_time_to_resolution_hours',   label: 'Min Time to Resolution (h)', ru: 'Мин. время до завершения (ч)', type: 'number', step: 1 },
+    { key: 'min_market_price',               label: 'Min Market Price',           ru: 'Мин. цена рынка',            type: 'number', step: 0.01 },
+    { key: 'markets_per_cycle',              label: 'Markets Per Cycle',          ru: 'Рынков за цикл',             type: 'number', step: 1 },
   ]},
-  { section: 'ESTIMATION', fields: [
-    { key: 'claude_model',         label: 'Claude Model',    type: 'text' },
-    { key: 'ensemble_size',        label: 'Ensemble Size',   type: 'number', step: 1 },
-    { key: 'ensemble_temperature', label: 'Temperature',     type: 'number', step: 0.1 },
-    { key: 'max_estimate_tokens',  label: 'Max Tokens',      type: 'number', step: 64 },
+  { section: 'ESTIMATION', ru: 'ОЦЕНКА', fields: [
+    { key: 'claude_model',         label: 'Claude Model',    ru: 'Модель Claude',    type: 'text' },
+    { key: 'ensemble_size',        label: 'Ensemble Size',   ru: 'Размер ансамбля',  type: 'number', step: 1 },
+    { key: 'ensemble_temperature', label: 'Temperature',     ru: 'Температура',      type: 'number', step: 0.1 },
+    { key: 'max_estimate_tokens',  label: 'Max Tokens',      ru: 'Макс. токенов',    type: 'number', step: 64 },
   ]},
-  { section: 'SIZING & RISK', fields: [
-    { key: 'kelly_fraction',            label: 'Kelly Fraction',    type: 'number', step: 0.05 },
-    { key: 'min_edge',                  label: 'Min Edge',          type: 'number', step: 0.01 },
-    { key: 'min_trade_usd',            label: 'Min Trade ($)',     type: 'number', step: 0.1 },
-    { key: 'max_position_pct',          label: 'Max Position %',   type: 'number', step: 0.01 },
-    { key: 'max_total_exposure_pct',    label: 'Max Exposure %',   type: 'number', step: 0.05 },
-    { key: 'max_category_exposure_pct', label: 'Max Category %',   type: 'number', step: 0.05 },
-    { key: 'daily_stop_loss_pct',       label: 'Daily Stop-Loss %',type: 'number', step: 0.01 },
-    { key: 'max_drawdown_pct',          label: 'Max Drawdown %',   type: 'number', step: 0.01 },
-    { key: 'max_concurrent_positions',  label: 'Max Positions',    type: 'number', step: 1 },
+  { section: 'SIZING & RISK', ru: 'РАЗМЕРЫ И РИСКИ', fields: [
+    { key: 'kelly_fraction',            label: 'Kelly Fraction',    ru: 'Доля Келли',           type: 'number', step: 0.05 },
+    { key: 'min_edge',                  label: 'Min Edge',          ru: 'Мин. преимущество',    type: 'number', step: 0.01 },
+    { key: 'min_trade_usd',            label: 'Min Trade ($)',     ru: 'Мин. сделка ($)',      type: 'number', step: 0.1 },
+    { key: 'max_position_pct',          label: 'Max Position %',   ru: 'Макс. позиция %',      type: 'number', step: 0.01 },
+    { key: 'max_total_exposure_pct',    label: 'Max Exposure %',   ru: 'Макс. открытые %',     type: 'number', step: 0.05 },
+    { key: 'max_category_exposure_pct', label: 'Max Category %',   ru: 'Макс. категория %',    type: 'number', step: 0.05 },
+    { key: 'daily_stop_loss_pct',       label: 'Daily Stop-Loss %',ru: 'Дневной стоп-лосс %',  type: 'number', step: 0.01 },
+    { key: 'max_drawdown_pct',          label: 'Max Drawdown %',   ru: 'Макс. просадка %',     type: 'number', step: 0.01 },
+    { key: 'max_concurrent_positions',  label: 'Max Positions',    ru: 'Макс. позиций',        type: 'number', step: 1 },
   ]},
-  { section: 'EXIT RULES', fields: [
-    { key: 'enable_position_review',           label: 'Enable Position Review',   type: 'bool' },
-    { key: 'position_stop_loss_pct',           label: 'Position Stop-Loss %',     type: 'number', step: 0.01 },
-    { key: 'take_profit_price',               label: 'Take-Profit Price',        type: 'number', step: 0.01 },
-    { key: 'exit_edge_buffer',                label: 'Edge-Gone Buffer',         type: 'number', step: 0.01 },
-    { key: 'review_reestimate_threshold_pct', label: 'Re-estimate Threshold %',  type: 'number', step: 0.01 },
-    { key: 'review_ensemble_size',            label: 'Review Ensemble Size',     type: 'number', step: 1 },
+  { section: 'EXIT RULES', ru: 'ПРАВИЛА ВЫХОДА', fields: [
+    { key: 'enable_position_review',           label: 'Enable Position Review',   ru: 'Мониторинг позиций',     type: 'bool' },
+    { key: 'position_stop_loss_pct',           label: 'Position Stop-Loss %',     ru: 'Стоп-лосс позиции %',   type: 'number', step: 0.01 },
+    { key: 'take_profit_price',               label: 'Take-Profit Price',        ru: 'Цена тейк-профита',      type: 'number', step: 0.01 },
+    { key: 'exit_edge_buffer',                label: 'Edge-Gone Buffer',         ru: 'Буфер выхода по грани',  type: 'number', step: 0.01 },
+    { key: 'review_reestimate_threshold_pct', label: 'Re-estimate Threshold %',  ru: 'Порог переоценки %',     type: 'number', step: 0.01 },
+    { key: 'review_ensemble_size',            label: 'Review Ensemble Size',     ru: 'Ансамбль переоценки',    type: 'number', step: 1 },
   ]},
-  { section: 'EMAIL', fields: [
-    { key: 'email_enabled',   label: 'Email Enabled',  type: 'bool' },
-    { key: 'email_smtp_host', label: 'SMTP Host',      type: 'text' },
-    { key: 'email_smtp_port', label: 'SMTP Port',      type: 'number', step: 1 },
-    { key: 'email_use_tls',   label: 'Use TLS',        type: 'bool' },
-    { key: 'email_user',      label: 'Email User',     type: 'text' },
-    { key: 'email_password',  label: 'Email Password', type: 'password' },
-    { key: 'email_to',        label: 'Email To',       type: 'text' },
+  { section: 'EMAIL', ru: 'ПОЧТА', fields: [
+    { key: 'email_enabled',   label: 'Email Enabled',  ru: 'Email включён',  type: 'bool' },
+    { key: 'email_smtp_host', label: 'SMTP Host',      ru: 'SMTP хост',      type: 'text' },
+    { key: 'email_smtp_port', label: 'SMTP Port',      ru: 'SMTP порт',      type: 'number', step: 1 },
+    { key: 'email_use_tls',   label: 'Use TLS',        ru: 'Использовать TLS', type: 'bool' },
+    { key: 'email_user',      label: 'Email User',     ru: 'Email адрес',    type: 'text' },
+    { key: 'email_password',  label: 'Email Password', ru: 'Email пароль',   type: 'password' },
+    { key: 'email_to',        label: 'Email To',       ru: 'Получатель',     type: 'text' },
   ]},
 ]
 
@@ -667,17 +867,18 @@ async function openConfig() {
   currentConfig = await api.readConfig()
   const form = $('config-form')
   form.innerHTML = ''
-  for (const { section, fields } of CONFIG_SCHEMA) {
+  for (const s of CONFIG_SCHEMA) {
     const sec = document.createElement('div'); sec.className = 'config-section'
-    sec.innerHTML = `<div class="config-section-title">${section}</div>`
+    sec.innerHTML = `<div class="config-section-title">${currentLang === 'ru' && s.ru ? s.ru : s.section}</div>`
     const grid = document.createElement('div'); grid.className = 'config-grid'
-    for (const f of fields) {
+    for (const f of s.fields) {
       const val = currentConfig[f.key]
       const group = document.createElement('div'); group.className = 'form-group'
+      const flabel = currentLang === 'ru' && f.ru ? f.ru : f.label
       if (f.type === 'bool') {
         const checked = Boolean(val)
         group.innerHTML = `<div class="form-toggle-row">
-          <label class="form-label">${f.label}</label>
+          <label class="form-label">${flabel}</label>
           <label class="toggle-switch">
             <input type="checkbox" data-key="${f.key}" ${checked ? 'checked' : ''}>
             <span class="toggle-slider"></span>
@@ -689,7 +890,7 @@ async function openConfig() {
           })
         }
       } else {
-        group.innerHTML = `<label class="form-label">${f.label}</label>
+        group.innerHTML = `<label class="form-label">${flabel}</label>
           <input class="form-input" type="${f.type === 'password' ? 'password' : f.type === 'number' ? 'number' : 'text'}"
             data-key="${f.key}" value="${escHtml(String(val ?? ''))}" step="${f.step || 'any'}" autocomplete="off"
             ${f.danger ? 'data-danger="true"' : ''}>`
@@ -748,7 +949,7 @@ async function confirmStart() {
   localStorage.setItem('bot-console', consoleFl)
   $('start-modal').classList.add('hidden')
   const result = await api.startBot({ mode, verbose, console: consoleFl })
-  if (result.error) { alert('Failed to start: ' + result.error); return }
+  if (result.error) { alert(t('startError', result.error)); return }
 
   // New session — clear log display so we only see this run
   logClearedAt = 0
@@ -757,7 +958,44 @@ async function confirmStart() {
   $('log-container').innerHTML = ''
 
   botRunning = true; updateBotStatusBadge()
-  appendLogLine({ level: 'INFO', message: `Bot started (PID ${result.pid}, mode: ${mode})`, timestamp: new Date().toISOString() })
+  appendLogLine({ level: 'INFO', message: t('botStarted', result.pid, mode), timestamp: new Date().toISOString() })
+}
+
+// ── Theme toggle ──────────────────────────────────────────────────────────
+function initTheme() {
+  const saved = localStorage.getItem('theme') || 'dark'
+  if (saved === 'light') document.body.classList.add('light')
+  const btn = $('btn-theme')
+  if (btn) {
+    btn.textContent = document.body.classList.contains('light') ? '🌙' : '☀'
+    btn.addEventListener('click', () => {
+      document.body.classList.toggle('light')
+      const isLight = document.body.classList.contains('light')
+      localStorage.setItem('theme', isLight ? 'light' : 'dark')
+      btn.textContent = isLight ? '🌙' : '☀'
+    })
+  }
+}
+
+// ── Language toggle ────────────────────────────────────────────────────────
+function initLang() {
+  applyLang()
+  const btn = $('btn-lang')
+  if (btn) {
+    btn.addEventListener('click', () => {
+      currentLang = currentLang === 'ru' ? 'en' : 'ru'
+      localStorage.setItem('lang', currentLang)
+      applyLang()
+      // Re-render dynamic content with new language
+      renderStats()
+      renderRiskMeters()
+      renderExitBreakdown()
+      renderPositions()
+      renderTrades()
+      renderLog()
+      updateBotStatusBadge()
+    })
+  }
 }
 
 // ── Modal setup ───────────────────────────────────────────────────────────

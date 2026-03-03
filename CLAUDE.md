@@ -181,9 +181,14 @@ dashboard/
 - **Charts**: Initialized once with `animation: false`; updated with `chart.update('none')` — prevents jumping/flickering on 8-second refresh.
 - **FileShare fix (.NET)**: `bot.log` must be opened with `FileShare.ReadWrite` in `Program.cs` so both the bot and dashboard can access it simultaneously.
 - **Stale exe**: After source changes to .NET, rebuild with `dotnet build -c Debug` from `dotnet/PolymarketBot/`. The dashboard prefers the compiled exe over `dotnet run` to avoid recompile locking.
+- **File watcher**: `setupFileWatcher()` uses 300ms debounce per file + `name === null` fallback (Windows sometimes omits filename in `fs.watch` callback).
+- **`t` variable bug**: `refresh()` must destructure as `[p, tr, l]` not `[p, t, l]` — `t` is the global translation function; shadowing it causes TypeError on every refresh call.
+- **i18n system**: `TRANS = { ru: {}, en: {} }` + `t(key, ...args)` helper. `applyLang()` updates `[data-i18n]` elements via first text node (not `innerHTML`) to preserve child elements (tip icons, sort-ind spans). `currentLang` stored in `localStorage.lang`.
+- **Tooltips**: `.tip-icon` spans with `data-tip-key`. `applyTips()` sets `data-tip` from `TRANS[lang].tips`. `initTooltips()` creates one `.tooltip-popup` div in `<body>` using `position: fixed` + `getBoundingClientRect()` — avoids `overflow: hidden` clipping that breaks CSS `::after` tooltips.
+- **Theme**: `body.light` CSS class toggles light theme. `initTheme()` reads/writes `localStorage.theme`.
 
 ### IPC Channels
 
-`read-portfolio`, `read-trades`, `read-logs`, `read-config`, `write-config`, `get-data-dir`, `set-data-dir`, `browse-data-dir`, `bot-status`, `start-bot`, `stop-bot`, `save-file`
+`read-portfolio`, `read-trades`, `read-logs`, `read-config`, `write-config`, `get-data-dir`, `set-data-dir`, `browse-data-dir`, `bot-status`, `start-bot`, `stop-bot`, `save-file`, `open-logs-dir`
 
 Push events (main → renderer): `file-changed`, `bot-output`, `bot-stopped`

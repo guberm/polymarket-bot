@@ -107,6 +107,9 @@ An Electron desktop app that visualises the bot's state in real time.
 - Live log — shows only the current session, clears between restarts, supports manual clear and export
 - Config editor — view and edit all `polymarket_bot_config.json` fields in-browser
 - Start / Stop bot — launches Python or .NET implementation with optional `--verbose` / `--console` flags; preferences persist across sessions
+- Light/dark theme toggle (button in header, persists across sessions)
+- Language toggle — switch between English and Russian UI (persists across sessions)
+- Tooltip help icons (?) on all stat cards and section headers — hover to see explanation
 
 **Requirements:** Node.js (for first-time `npm install`). No rebuild needed after that — `run-dashboard.bat` uses the cached Electron binary.
 

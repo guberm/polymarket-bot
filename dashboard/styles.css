@@ -684,6 +684,56 @@ body {
   overflow: auto;
 }
 
+/* ── Light theme ──────────────────────────────────────────────────────────── */
+body.light {
+  --bg:      #f0f2f5;
+  --bg1:     #ffffff;
+  --bg2:     #f8f9fc;
+  --bg3:     #edf0f7;
+  --border:  #dce3ef;
+  --border2: #c8d1e0;
+  --text:    #1a2235;
+  --text2:   #4a5f7a;
+  --text3:   #8898aa;
+  --green2:  #d1fae5;
+  --red2:    #fee2e2;
+  --amber2:  #fef3c7;
+  --blue2:   #dbeafe;
+  --shadow:  0 2px 12px rgba(0,0,0,0.08);
+}
+body.light ::-webkit-scrollbar-track { background: var(--bg2); }
+body.light ::-webkit-scrollbar-thumb { background: var(--border2); }
+body.light .log-line { background: transparent; }
+body.light .log-line:hover { background: var(--bg3); }
+body.light .modal-overlay { background: rgba(0,0,0,0.35); }
+body.light .modal-box { box-shadow: 0 8px 40px rgba(0,0,0,0.18); }
+
+/* ── Tooltip icons ───────────────────────────────────────────────────────── */
+.tip-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: var(--text3); color: var(--bg);
+  font-size: 8px; font-weight: 700; font-style: normal;
+  cursor: help; margin-left: 5px; flex-shrink: 0; vertical-align: middle;
+  user-select: none; line-height: 1;
+}
+body.light .tip-icon { background: var(--text2); color: #fff; }
+
+/* JS-positioned floating tooltip — appended to <body>, uses position:fixed */
+.tooltip-popup {
+  position: fixed; z-index: 99999; pointer-events: none;
+  background: var(--bg1); color: var(--text);
+  border: 1px solid var(--border2); border-radius: 7px;
+  padding: 9px 12px; font-size: 11px; line-height: 1.55;
+  white-space: pre-line; width: 240px; max-width: calc(100vw - 16px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  font-family: var(--font-ui); font-weight: 400;
+  letter-spacing: 0; text-transform: none;
+  opacity: 0; transition: opacity 0.12s;
+}
+.tooltip-popup.visible { opacity: 1; }
+.tooltip-popup.hidden  { display: none; }
+
 /* ── Utility ─────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
 .muted  { color: var(--text3); }

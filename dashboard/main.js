@@ -54,6 +54,7 @@ function createWindow() {
 }
 
 // ── File watcher ──────────────────────────────────────────────────────────
+const watchDebounce = {}
 function setupFileWatcher() {
   Object.values(watchers).forEach(w => { try { w.close() } catch {} })
   watchers = {}
@@ -65,8 +66,12 @@ function setupFileWatcher() {
     // Watch the directory so we catch newly created files too
     try {
       watchers[file] = fs.watch(dir, { persistent: false }, (evt, name) => {
-        if (name === file && mainWindow) {
-          mainWindow.webContents.send('file-changed', file)
+        // On Windows, name can be null — fall back to watching any change in dir
+        if ((name === null || name === file) && mainWindow) {
+          clearTimeout(watchDebounce[file])
+          watchDebounce[file] = setTimeout(() => {
+            mainWindow.webContents.send('file-changed', file)
+          }, 300)
         }
       })
     } catch {}
