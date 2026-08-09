@@ -905,7 +905,8 @@ while (!cts.Token.IsCancellationRequested)
             {
                 PersistenceService.AppendEstimateEvaluation(market, estimate, null,
                     config.MultiProvider ? "multi" : config.AiProvider,
-                    "skip", "portfolio_dead", config.DataDir, kalshiReference, trackWatch: false);
+                    "skip", "portfolio_dead", config.DataDir, kalshiReference, trackWatch: false,
+                    runId: runId, cycleId: $"{runId}:{cycle}");
                 log.LogWarning("Portfolio value < $1 — agent is dead");
                 Con($"{RED}DEAD: portfolio value depleted{RESET}");
                 portfolio.IsHalted = true;
@@ -942,7 +943,8 @@ while (!cts.Token.IsCancellationRequested)
                 }
                 PersistenceService.AppendEstimateEvaluation(market, estimate, null,
                     config.MultiProvider ? "multi" : config.AiProvider,
-                    "skip", bestEdge > config.MinEdge ? "kelly_or_clob_min" : "no_net_edge", config.DataDir, kalshiReference, trackWatch: false);
+                    "skip", bestEdge > config.MinEdge ? "kelly_or_clob_min" : "no_net_edge", config.DataDir, kalshiReference,
+                    trackWatch: false, runId: runId, cycleId: $"{runId}:{cycle}");
                 continue;
             }
 
@@ -956,7 +958,8 @@ while (!cts.Token.IsCancellationRequested)
                 Con($"  {idx} -> {YELLOW}NO FRESH BOOK{RESET}");
                 PersistenceService.AppendEstimateEvaluation(market, estimate, signal,
                     config.MultiProvider ? "multi" : config.AiProvider,
-                    "skip", "no_fresh_book", config.DataDir, kalshiReference, trackWatch: false);
+                    "skip", "no_fresh_book", config.DataDir, kalshiReference, trackWatch: false,
+                    runId: runId, cycleId: $"{runId}:{cycle}");
                 continue;
             }
             if (!executionQuote.Value.Complete)
@@ -967,7 +970,8 @@ while (!cts.Token.IsCancellationRequested)
                 Con($"  {idx} -> {YELLOW}THIN BOOK{RESET}");
                 PersistenceService.AppendEstimateEvaluation(market, estimate, signal,
                     config.MultiProvider ? "multi" : config.AiProvider,
-                    "skip", "insufficient_book_depth", config.DataDir, kalshiReference, trackWatch: false);
+                    "skip", "insufficient_book_depth", config.DataDir, kalshiReference, trackWatch: false,
+                    runId: runId, cycleId: $"{runId}:{cycle}");
                 continue;
             }
 
@@ -980,7 +984,8 @@ while (!cts.Token.IsCancellationRequested)
                 Con($"  {idx} -> edge disappeared at book VWAP");
                 PersistenceService.AppendEstimateEvaluation(market, estimate, signal,
                     config.MultiProvider ? "multi" : config.AiProvider,
-                    "skip", "edge_disappeared_at_vwap", config.DataDir, kalshiReference, trackWatch: false);
+                    "skip", "edge_disappeared_at_vwap", config.DataDir, kalshiReference, trackWatch: false,
+                    runId: runId, cycleId: $"{runId}:{cycle}");
                 continue;
             }
             signal = repriced;
@@ -994,7 +999,8 @@ while (!cts.Token.IsCancellationRequested)
                 Con($"  {idx} -> {estimate.FairProbability:P0} {YELLOW}RISK BLOCKED{RESET}");
                 PersistenceService.AppendEstimateEvaluation(market, estimate, signal,
                     config.MultiProvider ? "multi" : config.AiProvider,
-                    "skip", "risk_blocked", config.DataDir, kalshiReference, trackWatch: false);
+                    "skip", "risk_blocked", config.DataDir, kalshiReference, trackWatch: false,
+                    runId: runId, cycleId: $"{runId}:{cycle}");
                 continue;
             }
 
@@ -1047,7 +1053,8 @@ while (!cts.Token.IsCancellationRequested)
                 Con($"  {idx} {GREEN}TRADE OK{RESET} (EV=${signal.ExpectedValue:F2})");
                 PersistenceService.AppendEstimateEvaluation(market, estimate, signal,
                     config.MultiProvider ? "multi" : config.AiProvider,
-                    "buy", "executed", config.DataDir, kalshiReference, trackWatch: false);
+                    "buy", "executed", config.DataDir, kalshiReference, trackWatch: false,
+                    runId: runId, cycleId: $"{runId}:{cycle}");
             }
             else
             {
@@ -1056,7 +1063,8 @@ while (!cts.Token.IsCancellationRequested)
                 Con($"  {idx} {RED}TRADE FAILED{RESET}");
                 PersistenceService.AppendEstimateEvaluation(market, estimate, signal,
                     config.MultiProvider ? "multi" : config.AiProvider,
-                    "skip", "execution_failed", config.DataDir, kalshiReference, trackWatch: false);
+                    "skip", "execution_failed", config.DataDir, kalshiReference, trackWatch: false,
+                    runId: runId, cycleId: $"{runId}:{cycle}");
             }
         }
 

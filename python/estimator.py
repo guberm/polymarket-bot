@@ -8,6 +8,7 @@ Multi-provider mode (multi_provider=true):
   Per-provider model fields: anthropic_model, openai_model, gemini_model, openrouter_model
 """
 
+import hashlib
 import json
 import logging
 import math
@@ -44,6 +45,8 @@ Rules:
 - The current market price reflects real-money consensus from many informed traders — treat it as a Bayesian prior. Only deviate significantly if you have strong specific reasoning.
 - If deeply uncertain, stay close to the market price
 - Keep reasoning under 50 words"""
+
+PROMPT_VERSION = "probability-v1"
 
 
 def _build_user_prompt(market: MarketInfo) -> str:
@@ -364,6 +367,14 @@ class Estimator:
             output_tokens_used=total_output,
             api_cost_usd=api_cost_usd,
             provider_estimates=provider_estimates or {},
+            prompt_version=PROMPT_VERSION,
+            prompt_sha256=hashlib.sha256(
+                (SYSTEM_PROMPT + "\n\n" + _build_user_prompt(market)).encode("utf-8")
+            ).hexdigest(),
+            provider_models={
+                provider: self._get_model(provider)
+                for provider in (provider_estimates or {})
+            },
         )
 
     # ── Provider dispatch ──────────────────────────────────────────────────

@@ -61,14 +61,20 @@ public static class PersistenceService
         string reason,
         string dataDir,
         object? kalshiReference = null,
-        bool trackWatch = true)
+        bool trackWatch = true,
+        string runId = "",
+        string cycleId = "")
     {
         Directory.CreateDirectory(dataDir);
         var path = Path.Combine(dataDir, EstimatesFile);
         var now = DateTimeOffset.UtcNow;
         var record = new
         {
+            JournalSchemaVersion = 2,
             RecordType = "evaluation",
+            Implementation = "dotnet",
+            RunId = runId,
+            CycleId = cycleId,
             Timestamp = now.ToUnixTimeMilliseconds() / 1000.0,
             ConditionId = market.ConditionId,
             market.Question,
@@ -81,6 +87,12 @@ public static class PersistenceService
             estimate.ApiCostUsd,
             estimate.DurationSeconds,
             estimate.ProviderEstimates,
+            estimate.ProviderModels,
+            estimate.ReasoningSummary,
+            estimate.InputTokensUsed,
+            estimate.OutputTokensUsed,
+            estimate.PromptVersion,
+            estimate.PromptSha256,
             MarketYesPrice = market.OutcomeYesPrice,
             MarketNoPrice = market.OutcomeNoPrice,
             market.Liquidity,

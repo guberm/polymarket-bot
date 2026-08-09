@@ -14,4 +14,7 @@ public sealed class Estimate
     public double ApiCostUsd { get; set; }
     public double DurationSeconds { get; set; }
     public Dictionary<string, double> ProviderEstimates { get; init; } = [];
+    public string PromptVersion { get; init; } = "";
+    public string PromptSha256 { get; init; } = "";
+    public Dictionary<string, string> ProviderModels { get; init; } = [];
 }

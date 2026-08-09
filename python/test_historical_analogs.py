@@ -60,12 +60,32 @@ class HistoricalAnalogTests(unittest.TestCase):
             end_date=(datetime.now(timezone.utc) + timedelta(hours=6)).isoformat(),
             category="politics", event_title="Election", description="",
         )
-        estimate = Estimate("context", "Context?", .6, [.58, .62], .02, "")
+        estimate = Estimate(
+            "context", "Context?", .6, [.58, .62], .02, "base-rate evidence",
+            input_tokens_used=123,
+            output_tokens_used=45,
+            prompt_version="probability-v1",
+            prompt_sha256="a" * 64,
+            provider_models={"openai": "gpt-test"},
+        )
 
         with tempfile.TemporaryDirectory() as data_dir:
-            append_estimate_evaluation(market, estimate, data_dir, "multi", "skip", "test", track_watch=False)
+            append_estimate_evaluation(
+                market, estimate, data_dir, "multi", "skip", "test",
+                track_watch=False, run_id="run-test", cycle_id="run-test:7",
+            )
             row = json.loads((Path(data_dir) / "estimates.jsonl").read_text(encoding="utf-8"))
 
+        self.assertEqual(row["journal_schema_version"], 2)
+        self.assertEqual(row["implementation"], "python")
+        self.assertEqual(row["run_id"], "run-test")
+        self.assertEqual(row["cycle_id"], "run-test:7")
+        self.assertEqual(row["reasoning_summary"], "base-rate evidence")
+        self.assertEqual(row["input_tokens_used"], 123)
+        self.assertEqual(row["output_tokens_used"], 45)
+        self.assertEqual(row["prompt_version"], "probability-v1")
+        self.assertEqual(row["prompt_sha256"], "a" * 64)
+        self.assertEqual(row["provider_models"], {"openai": "gpt-test"})
         self.assertEqual(row["liquidity"], 12_345)
         self.assertEqual(row["volume_24hr"], 2_345)
         self.assertEqual(row["spread"], .02)

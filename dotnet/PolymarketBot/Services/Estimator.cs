@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -8,6 +9,7 @@ namespace PolymarketBot.Services;
 
 public sealed class Estimator
 {
+    public const string PromptVersion = "probability-v1";
     private const int CircuitFailureThreshold = 3;
     private static readonly TimeSpan CircuitCooldown = TimeSpan.FromMinutes(5);
     private const string SystemPrompt =
@@ -288,6 +290,11 @@ public sealed class Estimator
             OutputTokensUsed = totalOutput,
             ApiCostUsd = apiCostUsd,
             ProviderEstimates = providerEstimates ?? [],
+            PromptVersion = PromptVersion,
+            PromptSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                SystemPrompt + "\n\n" + BuildUserPrompt(market)))).ToLowerInvariant(),
+            ProviderModels = (providerEstimates ?? []).Keys
+                .ToDictionary(provider => provider, GetModelForProvider),
         };
     }
 

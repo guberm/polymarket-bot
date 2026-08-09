@@ -53,6 +53,9 @@ class Estimate:
     api_cost_usd: float = 0.0
     duration_seconds: float = 0.0
     provider_estimates: dict[str, float] = field(default_factory=dict)
+    prompt_version: str = ""
+    prompt_sha256: str = ""
+    provider_models: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

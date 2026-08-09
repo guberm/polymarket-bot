@@ -1,3 +1,4 @@
+import hashlib
 import json
 import smtplib
 import tempfile
@@ -202,6 +203,30 @@ class ReliabilityTests(unittest.TestCase):
             self.assertIsNotNone(Estimator(config).estimate(market))
 
         self.assertEqual(post.call_args.kwargs["json"]["response_format"], {"type": "json_object"})
+
+    def test_estimate_records_prompt_and_model_provenance(self):
+        config = BotConfig(
+            ai_provider="openai", openai_api_key="test", openai_model="gpt-test",
+            ensemble_size=1,
+        )
+        response = Mock(status_code=200)
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "choices": [{"message": {"content": '{"probability":0.5,"reasoning":"evidence"}'}}],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 7},
+        }
+        market = MarketInfo("c", "q", "s", .5, .5, "y", "n", 1, 1, 1, .4, .6, .2,
+                            "2030-01-01T00:00:00Z", "x", "e", "d")
+
+        with patch("estimator.requests.post", return_value=response) as post:
+            estimate = Estimator(config).estimate(market)
+
+        self.assertIsNotNone(estimate)
+        request = post.call_args.kwargs["json"]
+        prompt = request["messages"][0]["content"] + "\n\n" + request["messages"][1]["content"]
+        self.assertEqual(estimate.prompt_version, "probability-v1")
+        self.assertEqual(estimate.prompt_sha256, hashlib.sha256(prompt.encode("utf-8")).hexdigest())
+        self.assertEqual(estimate.provider_models, {"openai": "gpt-test"})
 
     def test_gemini_requests_json_response_schema(self):
         config = BotConfig(ai_provider="gemini", gemini_api_key="test", ensemble_size=1)

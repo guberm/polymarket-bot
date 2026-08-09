@@ -4,6 +4,8 @@ using PolymarketBot.Models;
 using PolymarketBot.Services;
 using System.Net;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 static void Near(double expected, double actual, double tolerance = 1e-9)
@@ -217,12 +219,26 @@ var contextMarket = new MarketInfo { ConditionId = "context", Question = "contex
     BestBid = .49, BestAsk = .51, Spread = .02,
     EndDate = DateTimeOffset.UtcNow.AddHours(6).ToString("o") };
 var watchEstimate = new Estimate { MarketConditionId = "watch", Question = "watch",
-    FairProbability = .5, RawEstimates = [.5] };
+    FairProbability = .5, RawEstimates = [.5], ReasoningSummary = "base-rate evidence",
+    InputTokensUsed = 123, OutputTokensUsed = 45,
+    PromptVersion = "probability-v1", PromptSha256 = new string('a', 64),
+    ProviderModels = new Dictionary<string, string> { ["openai"] = "gpt-test" } };
 PersistenceService.AppendEstimateEvaluation(contextMarket, watchEstimate, null, "test", "skip", "test", watchDir,
-    trackWatch: false);
+    trackWatch: false, runId: "run-test", cycleId: "run-test:7");
 using (var evaluation = JsonDocument.Parse(File.ReadLines(Path.Combine(watchDir, "estimates.jsonl")).First()))
 {
     var root = evaluation.RootElement;
+    if (root.GetProperty("journal_schema_version").GetInt32() != 2 ||
+        root.GetProperty("implementation").GetString() != "dotnet" ||
+        root.GetProperty("run_id").GetString() != "run-test" ||
+        root.GetProperty("cycle_id").GetString() != "run-test:7" ||
+        root.GetProperty("reasoning_summary").GetString() != "base-rate evidence" ||
+        root.GetProperty("input_tokens_used").GetInt32() != 123 ||
+        root.GetProperty("output_tokens_used").GetInt32() != 45 ||
+        root.GetProperty("prompt_version").GetString() != "probability-v1" ||
+        root.GetProperty("prompt_sha256").GetString() != new string('a', 64) ||
+        root.GetProperty("provider_models").GetProperty("openai").GetString() != "gpt-test")
+        throw new Exception("Decision provenance was not persisted");
     Near(12_345, root.GetProperty("liquidity").GetDouble());
     Near(2_345, root.GetProperty("volume_24hr").GetDouble());
     Near(.02, root.GetProperty("spread").GetDouble());
@@ -346,11 +362,13 @@ if (await outOfRangeEstimator.EstimateAsync(watchMarket) is not null)
     throw new Exception("Out-of-range model probability should be rejected");
 
 var formatCapture = new RequestCaptureHandler();
+Estimate? formatEstimate;
 using (var formatHttp = new HttpClient(formatCapture))
 {
     var formatEstimator = new Estimator(invalidJsonConfig, formatHttp,
         loggerFactory.CreateLogger<Estimator>());
-    if (await formatEstimator.EstimateAsync(watchMarket) is null)
+    formatEstimate = await formatEstimator.EstimateAsync(watchMarket);
+    if (formatEstimate is null)
         throw new Exception("Structured-output request did not produce an estimate");
 }
 using (var requestBody = JsonDocument.Parse(formatCapture.RequestBody
@@ -358,6 +376,14 @@ using (var requestBody = JsonDocument.Parse(formatCapture.RequestBody
 {
     if (requestBody.RootElement.GetProperty("response_format").GetProperty("type").GetString() != "json_object")
         throw new Exception("OpenAI-compatible request must require JSON output");
+    var messages = requestBody.RootElement.GetProperty("messages");
+    var prompt = messages[0].GetProperty("content").GetString() + "\n\n" +
+        messages[1].GetProperty("content").GetString();
+    var expectedHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(prompt))).ToLowerInvariant();
+    if (formatEstimate.PromptVersion != "probability-v1" ||
+        formatEstimate.PromptSha256 != expectedHash ||
+        formatEstimate.ProviderModels.GetValueOrDefault("openai") != invalidJsonConfig.OpenAiModel)
+        throw new Exception("Estimator prompt/model provenance is incomplete");
 }
 
 var geminiFormatCapture = new RequestCaptureHandler();

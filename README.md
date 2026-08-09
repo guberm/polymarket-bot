@@ -246,6 +246,8 @@ An Electron desktop app that visualises the bot's state in real time.
 
 Every completed estimate is appended to `data/estimates.jsonl`, including the original market price, executable VWAP/limit, confidence, decision, and skip reason. Resolution records allow post-hoc Brier score and calibration analysis:
 
+New evaluation rows use journal schema v2 and also record the implementation, run/cycle IDs, reasoning summary, token usage, contributing provider models, and a versioned SHA-256 fingerprint of the exact system + market prompt. Full prompts, raw provider payloads, API keys, and credentials are not written to disk. Older journal rows remain valid for replay and analysis.
+
 `data/resolution-watchlist.json` also tracks evaluated markets that were never bought, avoiding calibration bias toward executed trades only.
 
 ```bash

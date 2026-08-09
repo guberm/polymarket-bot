@@ -146,6 +146,7 @@ def main():
     if args.max_concurrent_positions is not None:
         config.max_concurrent_positions = args.max_concurrent_positions
     setup_logging(config.data_dir, verbose=args.verbose)
+    run_id = uuid4().hex[:12]
     instance_lock = InstanceLock(config.data_dir)
     if not instance_lock.acquire():
         log.error(f"Another bot instance owns {instance_lock.path}; refusing to start")
@@ -155,6 +156,7 @@ def main():
     mode = "LIVE" if config.live_trading else "PAPER"
     log.info("=" * 60)
     log.info("Polymarket Bot")
+    log.info(f"Run {run_id} started")
     log.info(f"Mode: {mode} | Bankroll: ${config.initial_bankroll:.2f}")
     log.info(f"Min edge: {config.min_edge:.0%} | Max position: {effective_max_position_pct(config):.0%}")
     log.info(f"Scan interval: {config.scan_interval_minutes} min | Markets/cycle: {config.markets_per_cycle}")
@@ -798,7 +800,7 @@ def main():
                         market, estimate, config.data_dir,
                         "multi" if config.multi_provider else config.ai_provider,
                         "skip", "portfolio_dead", kalshi_reference=kalshi_reference,
-                        track_watch=False,
+                        track_watch=False, run_id=run_id, cycle_id=f"{run_id}:{cycle}",
                     )
                     log.warning("Portfolio value < $1 — agent is dead")
                     if con:
@@ -824,6 +826,7 @@ def main():
                         "multi" if config.multi_provider else config.ai_provider,
                         "skip", "kelly_or_clob_min" if best_edge > config.min_edge else "no_net_edge",
                         kalshi_reference=kalshi_reference, track_watch=False,
+                        run_id=run_id, cycle_id=f"{run_id}:{cycle}",
                     )
                     continue
 
@@ -839,6 +842,7 @@ def main():
                         market, estimate, config.data_dir,
                         "multi" if config.multi_provider else config.ai_provider,
                         "skip", "no_fresh_book", signal_obj, kalshi_reference, False,
+                        run_id=run_id, cycle_id=f"{run_id}:{cycle}",
                     )
                     continue
                 if not execution_quote.complete:
@@ -852,6 +856,7 @@ def main():
                         market, estimate, config.data_dir,
                         "multi" if config.multi_provider else config.ai_provider,
                         "skip", "insufficient_book_depth", signal_obj, kalshi_reference, False,
+                        run_id=run_id, cycle_id=f"{run_id}:{cycle}",
                     )
                     continue
 
@@ -872,6 +877,7 @@ def main():
                         market, estimate, config.data_dir,
                         "multi" if config.multi_provider else config.ai_provider,
                         "skip", "edge_disappeared_at_vwap", signal_obj, kalshi_reference, False,
+                        run_id=run_id, cycle_id=f"{run_id}:{cycle}",
                     )
                     continue
                 signal_obj = repriced
@@ -889,6 +895,7 @@ def main():
                         market, estimate, config.data_dir,
                         "multi" if config.multi_provider else config.ai_provider,
                         "skip", "risk_blocked", signal_obj, kalshi_reference, False,
+                        run_id=run_id, cycle_id=f"{run_id}:{cycle}",
                     )
                     continue
 
@@ -932,6 +939,7 @@ def main():
                         market, estimate, config.data_dir,
                         "multi" if config.multi_provider else config.ai_provider,
                         "buy", "executed", signal_obj, kalshi_reference, False,
+                        run_id=run_id, cycle_id=f"{run_id}:{cycle}",
                     )
                 else:
                     log.warning(f"  [{i}/{len(eligible)}] TRADE FAILED: order execution error")
@@ -942,6 +950,7 @@ def main():
                         market, estimate, config.data_dir,
                         "multi" if config.multi_provider else config.ai_provider,
                         "skip", "execution_failed", signal_obj, kalshi_reference, False,
+                        run_id=run_id, cycle_id=f"{run_id}:{cycle}",
                     )
 
             track_resolutions(evaluated_markets, config.data_dir)

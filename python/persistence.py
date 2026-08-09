@@ -98,13 +98,19 @@ def append_estimate_evaluation(
     signal: Optional[Signal] = None,
     kalshi_reference: Optional[dict] = None,
     track_watch: bool = True,
+    run_id: str = "",
+    cycle_id: str = "",
 ) -> None:
     """Append one final decision for a successfully evaluated market."""
     os.makedirs(data_dir, exist_ok=True)
     path = os.path.join(data_dir, _ESTIMATES_FILE)
     timestamp = time.time()
     record = {
+        "journal_schema_version": 2,
         "record_type": "evaluation",
+        "implementation": "python",
+        "run_id": run_id,
+        "cycle_id": cycle_id,
         "timestamp": timestamp,
         "condition_id": market.condition_id,
         "question": market.question,
@@ -117,6 +123,12 @@ def append_estimate_evaluation(
         "api_cost_usd": estimate.api_cost_usd,
         "duration_seconds": estimate.duration_seconds,
         "provider_estimates": estimate.provider_estimates,
+        "provider_models": estimate.provider_models,
+        "reasoning_summary": estimate.reasoning_summary,
+        "input_tokens_used": estimate.input_tokens_used,
+        "output_tokens_used": estimate.output_tokens_used,
+        "prompt_version": estimate.prompt_version,
+        "prompt_sha256": estimate.prompt_sha256,
         "market_yes_price": market.outcome_yes_price,
         "market_no_price": market.outcome_no_price,
         "liquidity": market.liquidity,
