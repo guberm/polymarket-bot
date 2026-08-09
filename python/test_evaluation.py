@@ -1,6 +1,6 @@
 import unittest
 
-from analyze_estimates import brier_score, calibration_rows
+from analyze_estimates import brier_score, calibration_rows, wallet_flow_metrics
 from calibration import calibration_weights
 from kalshi_shadow import market_match_score
 from replay_estimates import ReplayConfig, replay
@@ -39,6 +39,25 @@ class EvaluationMetricTests(unittest.TestCase):
         self.assertAlmostEqual(high["actual"], 0.5)
         self.assertEqual(low["count"], 1)
         self.assertAlmostEqual(low["actual"], 0.0)
+
+    def test_wallet_flow_metrics_use_one_early_observation_per_market(self):
+        rows = [
+            {"record_type": "evaluation", "timestamp": 1, "condition_id": "a", "fair_probability": .7,
+             "market_yes_price": .55, "wallet_flow": {"gross_volume_usd": 100, "flow_imbalance": 1}},
+            {"record_type": "evaluation", "timestamp": 2, "condition_id": "a", "fair_probability": .1,
+             "market_yes_price": .1, "wallet_flow": {"gross_volume_usd": 100, "flow_imbalance": -1}},
+            {"record_type": "resolution", "condition_id": "a", "actual_outcome": 1},
+            {"record_type": "evaluation", "timestamp": 3, "condition_id": "b", "fair_probability": .3,
+             "market_yes_price": .45, "wallet_flow": {"gross_volume_usd": 100, "flow_imbalance": -1}},
+            {"record_type": "resolution", "condition_id": "b", "actual_outcome": 0},
+        ]
+
+        metrics = wallet_flow_metrics(rows, shift=.2, min_samples=2)
+
+        self.assertEqual(metrics["samples"], 2)
+        self.assertTrue(metrics["ready"])
+        self.assertLess(metrics["wallet_flow_brier"], metrics["market_brier"])
+        self.assertEqual(metrics["directional_accuracy"], 1)
 
     def test_market_match_requires_numbers_to_agree(self):
         self.assertGreater(

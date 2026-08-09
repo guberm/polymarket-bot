@@ -1220,6 +1220,13 @@ const CONFIG_SCHEMA = [
     { key: 'kalshi_min_match_score',      label: 'Min Token Match',     ru: 'Мин. текстовое совпадение', type: 'number', step: 0.05 },
     { key: 'kalshi_llm_same_threshold',   label: 'LLM Same Threshold',  ru: 'LLM порог эквивалентности', type: 'number', step: 0.05 },
   ]},
+  { section: 'WALLET FLOW SHADOW', ru: 'ПОТОК КОШЕЛЬКОВ', fields: [
+    { key: 'wallet_flow_shadow_enabled',  label: 'Enabled (read-only)', ru: 'Включено (только чтение)', type: 'bool' },
+    { key: 'wallet_flow_api_host',        label: 'API Host',            ru: 'API хост',                 type: 'text' },
+    { key: 'wallet_flow_window_minutes',  label: 'Window (minutes)',    ru: 'Окно (минуты)',            type: 'number', step: 5 },
+    { key: 'wallet_flow_trades_limit',    label: 'Trades Per Market',   ru: 'Сделок на рынок',          type: 'number', step: 100 },
+    { key: 'wallet_flow_large_trade_usd', label: 'Large Trade ($)',     ru: 'Крупная сделка ($)',       type: 'number', step: 100 },
+  ]},
   { section: 'SIZING & RISK', ru: 'РАЗМЕРЫ И РИСКИ', fields: [
     { key: 'kelly_fraction',            label: 'Kelly Fraction',    ru: 'Доля Келли',           type: 'number', step: 0.05 },
     { key: 'min_edge',                  label: 'Min Edge',          ru: 'Мин. преимущество',    type: 'number', step: 0.01 },

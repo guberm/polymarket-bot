@@ -72,6 +72,14 @@
   "kalshi_min_match_score": 0.55,
   "kalshi_llm_same_threshold": 0.90,
 
+  "____SECTION_WALLET_FLOW____": "── Aggregate public wallet flow (read-only, never affects trades) ────",
+
+  "wallet_flow_shadow_enabled": false,
+  "wallet_flow_api_host": "https://data-api.polymarket.com",
+  "wallet_flow_window_minutes": 60,
+  "wallet_flow_trades_limit": 500,
+  "wallet_flow_large_trade_usd": 1000,
+
   "____SECTION_AI_PROVIDER____": "── AI provider (pick one) ────────────────────────────────────────────",
 
   "ai_provider": "anthropic",

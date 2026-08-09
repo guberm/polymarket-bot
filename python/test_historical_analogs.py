@@ -73,6 +73,7 @@ class HistoricalAnalogTests(unittest.TestCase):
             append_estimate_evaluation(
                 market, estimate, data_dir, "multi", "skip", "test",
                 track_watch=False, run_id="run-test", cycle_id="run-test:7",
+                wallet_flow_reference={"trade_count": 2, "flow_imbalance": .25},
             )
             row = json.loads((Path(data_dir) / "estimates.jsonl").read_text(encoding="utf-8"))
 
@@ -80,6 +81,7 @@ class HistoricalAnalogTests(unittest.TestCase):
         self.assertEqual(row["implementation"], "python")
         self.assertEqual(row["run_id"], "run-test")
         self.assertEqual(row["cycle_id"], "run-test:7")
+        self.assertEqual(row["wallet_flow"]["trade_count"], 2)
         self.assertEqual(row["reasoning_summary"], "base-rate evidence")
         self.assertEqual(row["input_tokens_used"], 123)
         self.assertEqual(row["output_tokens_used"], 45)

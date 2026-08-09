@@ -259,6 +259,21 @@ python historical_analogs.py --estimates ../data/estimates.jsonl
 
 The replay is deterministic and offline: it applies sizing and risk overrides to the shared journal schema emitted by both the Python and .NET bots. Calibration-weighted live aggregation is opt-in and stays equal-weighted until every active provider has at least `calibration_min_samples` resolved predictions.
 
+### Optional wallet-flow shadow
+
+The default-off wallet-flow shadow reads Polymarket's public Data API and stores only market-level aggregates: directional volume, imbalance, unique-wallet count, concentration, and large-trade share. Wallet addresses are used transiently for aggregation, discarded when the lookup finishes, and never written to the journal. The telemetry cannot change signals, sizing, risk checks, or execution.
+
+`analyze_estimates.py` compares the earliest flow observation for each resolved market against both the market and AI Brier scores. Its printed live gate stays on `HOLD` until at least 100 independent resolved markets beat both baselines; passing that offline report still does not enable live influence.
+
+```json
+{
+  "wallet_flow_shadow_enabled": true,
+  "wallet_flow_window_minutes": 60,
+  "wallet_flow_trades_limit": 500,
+  "wallet_flow_large_trade_usd": 1000
+}
+```
+
 `historical_analogs.py` is an offline, leak-free nearest-neighbor baseline. It represents each market as one independent lifecycle episode, uses only candidates that had already resolved when the target was observed, and compares its walk-forward Brier score and log loss with both the AI estimate and market price. New journal rows include liquidity, volume, spread, order-book levels, end date, and time to resolution. The report keeps `live_gate.ready=false` until at least 100 predictions beat both baselines across three chronological folds; it never changes live signals or execution.
 
 ## Optional Kalshi shadow comparison
@@ -374,6 +389,10 @@ Azure also requires: `azure_openai_api_version` (default `2024-02-01`).
 | `stale_quote_haircut_pct` | `0.25` | Haircut applied while quote failures are inside the grace window |
 | `resolution_checks_per_cycle` | `20` | Bounded resolution checks for evaluated, unbought markets |
 | `resolution_retry_hours` | `6` | Delay before retrying an unresolved watched market |
+| `wallet_flow_shadow_enabled` | `false` | Record anonymous public wallet-flow aggregates for offline analysis only |
+| `wallet_flow_window_minutes` | `60` | Public trade lookback window per evaluated market |
+| `wallet_flow_trades_limit` | `500` | Maximum public trades fetched per evaluated market |
+| `wallet_flow_large_trade_usd` | `1000` | Notional threshold for aggregate large-trade metrics |
 
 ### Estimation
 
@@ -542,6 +561,7 @@ python/                            ← Python implementation
   calibration.py                     Gated provider calibration weights
   execution.py                       CLOB depth walking and VWAP quotes
   kalshi_shadow.py                   Optional read-only cross-market reference
+  wallet_flow_shadow.py              Anonymous public flow telemetry for offline research
   runtime_safety.py                  Cross-language single-instance lock
   analyze_estimates.py               Brier score and calibration report
   historical_analogs.py              Leak-free historical analog evaluation
@@ -562,6 +582,7 @@ dotnet/PolymarketBot/              ← .NET 8 implementation (mirrors Python)
     ApiPricing.cs                    Per-provider token cost calculation
     ExecutionPricing.cs              CLOB depth walking and VWAP quotes
     KalshiShadow.cs                  Optional read-only cross-market reference
+    WalletFlowShadow.cs              Anonymous public flow telemetry for offline research
     RuntimeSafety.cs                 Cross-language single-instance lock
     MarketScanner.cs                 Gamma API + fresh CLOB books
     Portfolio.cs                     Kelly sizing, risk, cooldown

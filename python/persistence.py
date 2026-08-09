@@ -100,6 +100,7 @@ def append_estimate_evaluation(
     track_watch: bool = True,
     run_id: str = "",
     cycle_id: str = "",
+    wallet_flow_reference: Optional[dict] = None,
 ) -> None:
     """Append one final decision for a successfully evaluated market."""
     os.makedirs(data_dir, exist_ok=True)
@@ -148,6 +149,7 @@ def append_estimate_evaluation(
         "decision": decision,
         "reason": reason,
         "kalshi": kalshi_reference,
+        "wallet_flow": wallet_flow_reference,
     }
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")

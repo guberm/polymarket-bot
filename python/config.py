@@ -75,6 +75,13 @@ class BotConfig:
     kalshi_min_match_score: float = 0.55
     kalshi_llm_same_threshold: float = 0.90
 
+    # Optional read-only aggregate wallet-flow telemetry
+    wallet_flow_shadow_enabled: bool = False
+    wallet_flow_api_host: str = "https://data-api.polymarket.com"
+    wallet_flow_window_minutes: int = 60
+    wallet_flow_trades_limit: int = 500
+    wallet_flow_large_trade_usd: float = 1000.0
+
     # AI provider
     ai_provider: str = "anthropic"   # selected provider for single-provider mode
     multi_provider: bool = False     # True = query ALL configured providers and aggregate
@@ -225,6 +232,11 @@ class BotConfig:
             kalshi_markets_limit=get("kalshi_markets_limit", 200),
             kalshi_min_match_score=get("kalshi_min_match_score", 0.55),
             kalshi_llm_same_threshold=get("kalshi_llm_same_threshold", 0.90),
+            wallet_flow_shadow_enabled=get("wallet_flow_shadow_enabled", False),
+            wallet_flow_api_host=get("wallet_flow_api_host", "https://data-api.polymarket.com"),
+            wallet_flow_window_minutes=get("wallet_flow_window_minutes", 60),
+            wallet_flow_trades_limit=get("wallet_flow_trades_limit", 500),
+            wallet_flow_large_trade_usd=get("wallet_flow_large_trade_usd", 1000.0),
             ai_provider=get("ai_provider", "anthropic"),
             multi_provider=get("multi_provider", False),
             anthropic_enabled=get("anthropic_enabled", True),

@@ -63,7 +63,8 @@ public static class PersistenceService
         object? kalshiReference = null,
         bool trackWatch = true,
         string runId = "",
-        string cycleId = "")
+        string cycleId = "",
+        object? walletFlowReference = null)
     {
         Directory.CreateDirectory(dataDir);
         var path = Path.Combine(dataDir, EstimatesFile);
@@ -112,6 +113,7 @@ public static class PersistenceService
             Decision = decision,
             Reason = reason,
             Kalshi = kalshiReference,
+            WalletFlow = walletFlowReference,
         };
         File.AppendAllText(path, JsonSerializer.Serialize(record, JsonLineOpts) + Environment.NewLine);
         if (trackWatch) TrackResolution(market, dataDir);

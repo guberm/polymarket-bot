@@ -268,6 +268,9 @@ var estimator = new Estimator(config, httpClient, loggerFactory.CreateLogger<Est
 var kalshiShadow = config.KalshiShadowEnabled
     ? new KalshiShadow(config, httpClient, loggerFactory.CreateLogger<KalshiShadow>())
     : null;
+var walletFlowShadow = config.WalletFlowShadowEnabled
+    ? new WalletFlowShadow(config, httpClient, loggerFactory.CreateLogger<WalletFlowShadow>())
+    : null;
 var notifier = new Notifier(config, loggerFactory.CreateLogger<Notifier>());
 
 // ── Validate Anthropic API key ───────────────────────────────────
@@ -899,6 +902,9 @@ while (!cts.Token.IsCancellationRequested)
                 if (config.LlmCostTrackingEnabled)
                     portfolio.RecordApiCostUsd(lookup.ApiCostUsd);
             }
+            var walletFlowReference = walletFlowShadow is not null
+                ? await walletFlowShadow.LookupAsync(market, cts.Token)
+                : null;
 
             // Only halt if total portfolio value (not just free USDC) is depleted
             if (portfolio.Equity() < 1.0)
@@ -906,7 +912,7 @@ while (!cts.Token.IsCancellationRequested)
                 PersistenceService.AppendEstimateEvaluation(market, estimate, null,
                     config.MultiProvider ? "multi" : config.AiProvider,
                     "skip", "portfolio_dead", config.DataDir, kalshiReference, trackWatch: false,
-                    runId: runId, cycleId: $"{runId}:{cycle}");
+                    runId: runId, cycleId: $"{runId}:{cycle}", walletFlowReference: walletFlowReference);
                 log.LogWarning("Portfolio value < $1 — agent is dead");
                 Con($"{RED}DEAD: portfolio value depleted{RESET}");
                 portfolio.IsHalted = true;
@@ -944,7 +950,7 @@ while (!cts.Token.IsCancellationRequested)
                 PersistenceService.AppendEstimateEvaluation(market, estimate, null,
                     config.MultiProvider ? "multi" : config.AiProvider,
                     "skip", bestEdge > config.MinEdge ? "kelly_or_clob_min" : "no_net_edge", config.DataDir, kalshiReference,
-                    trackWatch: false, runId: runId, cycleId: $"{runId}:{cycle}");
+                    trackWatch: false, runId: runId, cycleId: $"{runId}:{cycle}", walletFlowReference: walletFlowReference);
                 continue;
             }
 
@@ -959,7 +965,7 @@ while (!cts.Token.IsCancellationRequested)
                 PersistenceService.AppendEstimateEvaluation(market, estimate, signal,
                     config.MultiProvider ? "multi" : config.AiProvider,
                     "skip", "no_fresh_book", config.DataDir, kalshiReference, trackWatch: false,
-                    runId: runId, cycleId: $"{runId}:{cycle}");
+                    runId: runId, cycleId: $"{runId}:{cycle}", walletFlowReference: walletFlowReference);
                 continue;
             }
             if (!executionQuote.Value.Complete)
@@ -971,7 +977,7 @@ while (!cts.Token.IsCancellationRequested)
                 PersistenceService.AppendEstimateEvaluation(market, estimate, signal,
                     config.MultiProvider ? "multi" : config.AiProvider,
                     "skip", "insufficient_book_depth", config.DataDir, kalshiReference, trackWatch: false,
-                    runId: runId, cycleId: $"{runId}:{cycle}");
+                    runId: runId, cycleId: $"{runId}:{cycle}", walletFlowReference: walletFlowReference);
                 continue;
             }
 
@@ -985,7 +991,7 @@ while (!cts.Token.IsCancellationRequested)
                 PersistenceService.AppendEstimateEvaluation(market, estimate, signal,
                     config.MultiProvider ? "multi" : config.AiProvider,
                     "skip", "edge_disappeared_at_vwap", config.DataDir, kalshiReference, trackWatch: false,
-                    runId: runId, cycleId: $"{runId}:{cycle}");
+                    runId: runId, cycleId: $"{runId}:{cycle}", walletFlowReference: walletFlowReference);
                 continue;
             }
             signal = repriced;
@@ -1000,7 +1006,7 @@ while (!cts.Token.IsCancellationRequested)
                 PersistenceService.AppendEstimateEvaluation(market, estimate, signal,
                     config.MultiProvider ? "multi" : config.AiProvider,
                     "skip", "risk_blocked", config.DataDir, kalshiReference, trackWatch: false,
-                    runId: runId, cycleId: $"{runId}:{cycle}");
+                    runId: runId, cycleId: $"{runId}:{cycle}", walletFlowReference: walletFlowReference);
                 continue;
             }
 
@@ -1054,7 +1060,7 @@ while (!cts.Token.IsCancellationRequested)
                 PersistenceService.AppendEstimateEvaluation(market, estimate, signal,
                     config.MultiProvider ? "multi" : config.AiProvider,
                     "buy", "executed", config.DataDir, kalshiReference, trackWatch: false,
-                    runId: runId, cycleId: $"{runId}:{cycle}");
+                    runId: runId, cycleId: $"{runId}:{cycle}", walletFlowReference: walletFlowReference);
             }
             else
             {
@@ -1064,7 +1070,7 @@ while (!cts.Token.IsCancellationRequested)
                 PersistenceService.AppendEstimateEvaluation(market, estimate, signal,
                     config.MultiProvider ? "multi" : config.AiProvider,
                     "skip", "execution_failed", config.DataDir, kalshiReference, trackWatch: false,
-                    runId: runId, cycleId: $"{runId}:{cycle}");
+                    runId: runId, cycleId: $"{runId}:{cycle}", walletFlowReference: walletFlowReference);
             }
         }
 

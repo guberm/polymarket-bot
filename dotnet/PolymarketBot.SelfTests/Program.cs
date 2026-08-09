@@ -138,6 +138,45 @@ if (KalshiShadow.MatchScore(
 Near(0, KalshiShadow.MatchScore(
     "Will Bitcoin exceed $150,000 in 2026?", "Bitcoin above $100,000 in 2026"));
 
+var walletConditionId = "0x" + new string('a', 64);
+var walletMarket = new MarketInfo { ConditionId = walletConditionId, Question = "Wallet flow?", Slug = "wallet-flow",
+    TokenIdYes = "yes", TokenIdNo = "no", OutcomeYesPrice = .5, OutcomeNoPrice = .5 };
+using (var walletHttp = new HttpClient(new StaticResponseHandler($$"""
+[
+  {"conditionId":"{{walletConditionId}}","proxyWallet":"wallet-a","side":"BUY","outcome":"YES","size":10,"price":0.6,"timestamp":900},
+  {"conditionId":"{{walletConditionId}}","proxyWallet":"wallet-a","side":"BUY","outcome":"NO","size":20,"price":0.4,"timestamp":901},
+  {"conditionId":"{{walletConditionId}}","proxyWallet":"wallet-b","side":"SELL","outcome":"YES","size":5,"price":0.5,"timestamp":902},
+  {"conditionId":"{{walletConditionId}}","proxyWallet":"wallet-c","side":"SELL","outcome":"NO","size":4,"price":0.25,"timestamp":903}
+]
+""")))
+{
+    var walletFlow = new WalletFlowShadow(new BotConfig
+    {
+        WalletFlowWindowMinutes = 10,
+        WalletFlowTradesLimit = 123,
+        WalletFlowLargeTradeUsd = 5,
+    }, walletHttp, loggerFactory.CreateLogger<WalletFlowShadow>(), () => DateTimeOffset.FromUnixTimeSeconds(1000));
+    var flow = await walletFlow.LookupAsync(walletMarket) ?? throw new Exception("Wallet flow aggregation returned null");
+    if (flow.TradeCount != 4 || flow.WalletCount != 3 || flow.LargeTradeCount != 2)
+        throw new Exception("Wallet flow counts are incorrect");
+    Near(17.5, flow.GrossVolumeUsd);
+    Near(7, flow.YesDirectionVolumeUsd);
+    Near(10.5, flow.NoDirectionVolumeUsd);
+    Near(-.2, flow.FlowImbalance);
+    Near(.8, flow.TopWalletShare);
+    Near(.8, flow.LargeTradeShare);
+    var serializedFlow = JsonSerializer.Serialize(flow);
+    if (serializedFlow.Contains("wallet-a") || serializedFlow.Contains("proxyWallet"))
+        throw new Exception("Wallet identifiers leaked from aggregate metrics");
+}
+using (var failingWalletHttp = new HttpClient(new ThrowingResponseHandler()))
+{
+    var walletFlow = new WalletFlowShadow(new BotConfig(), failingWalletHttp,
+        loggerFactory.CreateLogger<WalletFlowShadow>(), () => DateTimeOffset.FromUnixTimeSeconds(1000));
+    if (await walletFlow.LookupAsync(walletMarket) is not null)
+        throw new Exception("Wallet flow network failures must fail open");
+}
+
 using (var golden = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "golden_execution.json"))))
 foreach (var vector in golden.RootElement.EnumerateArray())
 {
@@ -224,7 +263,8 @@ var watchEstimate = new Estimate { MarketConditionId = "watch", Question = "watc
     PromptVersion = "probability-v1", PromptSha256 = new string('a', 64),
     ProviderModels = new Dictionary<string, string> { ["openai"] = "gpt-test" } };
 PersistenceService.AppendEstimateEvaluation(contextMarket, watchEstimate, null, "test", "skip", "test", watchDir,
-    trackWatch: false, runId: "run-test", cycleId: "run-test:7");
+    trackWatch: false, runId: "run-test", cycleId: "run-test:7",
+    walletFlowReference: new { TradeCount = 2, FlowImbalance = .25 });
 using (var evaluation = JsonDocument.Parse(File.ReadLines(Path.Combine(watchDir, "estimates.jsonl")).First()))
 {
     var root = evaluation.RootElement;
@@ -237,7 +277,8 @@ using (var evaluation = JsonDocument.Parse(File.ReadLines(Path.Combine(watchDir,
         root.GetProperty("output_tokens_used").GetInt32() != 45 ||
         root.GetProperty("prompt_version").GetString() != "probability-v1" ||
         root.GetProperty("prompt_sha256").GetString() != new string('a', 64) ||
-        root.GetProperty("provider_models").GetProperty("openai").GetString() != "gpt-test")
+        root.GetProperty("provider_models").GetProperty("openai").GetString() != "gpt-test" ||
+        root.GetProperty("wallet_flow").GetProperty("trade_count").GetInt32() != 2)
         throw new Exception("Decision provenance was not persisted");
     Near(12_345, root.GetProperty("liquidity").GetDouble());
     Near(2_345, root.GetProperty("volume_24hr").GetDouble());
@@ -511,6 +552,12 @@ sealed class StaticResponseHandler(string body) : HttpMessageHandler
 {
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
+}
+
+sealed class ThrowingResponseHandler : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        => throw new HttpRequestException("offline");
 }
 
 sealed class RequestCaptureHandler : HttpMessageHandler

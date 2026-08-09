@@ -22,6 +22,7 @@ from logger_setup import setup_logging
 from market_scanner import MarketScanner
 from estimator import Estimator
 from kalshi_shadow import KalshiShadow
+from wallet_flow_shadow import WalletFlowShadow
 from models import MarketInfo, Side, Trade, TradeAction
 from notifier import Notifier
 from portfolio import Portfolio
@@ -250,6 +251,7 @@ def main():
     scanner = MarketScanner(config)
     estimator = Estimator(config)
     kalshi_shadow = KalshiShadow(config) if config.kalshi_shadow_enabled else None
+    wallet_flow_shadow = WalletFlowShadow(config) if config.wallet_flow_shadow_enabled else None
     notifier = Notifier(config)
 
     if config.multi_provider:
@@ -793,6 +795,7 @@ def main():
                     kalshi_reference, verify_cost = kalshi_shadow.find_reference(market, estimator)
                     if config.llm_cost_tracking_enabled:
                         portfolio.record_api_cost_usd(verify_cost)
+                wallet_flow_reference = wallet_flow_shadow.lookup(market) if wallet_flow_shadow else None
 
                 # Only halt if total portfolio value is truly depleted
                 if portfolio.equity() < 1.0:
@@ -801,6 +804,7 @@ def main():
                         "multi" if config.multi_provider else config.ai_provider,
                         "skip", "portfolio_dead", kalshi_reference=kalshi_reference,
                         track_watch=False, run_id=run_id, cycle_id=f"{run_id}:{cycle}",
+                        wallet_flow_reference=wallet_flow_reference,
                     )
                     log.warning("Portfolio value < $1 — agent is dead")
                     if con:
@@ -827,6 +831,7 @@ def main():
                         "skip", "kelly_or_clob_min" if best_edge > config.min_edge else "no_net_edge",
                         kalshi_reference=kalshi_reference, track_watch=False,
                         run_id=run_id, cycle_id=f"{run_id}:{cycle}",
+                        wallet_flow_reference=wallet_flow_reference,
                     )
                     continue
 
@@ -843,6 +848,7 @@ def main():
                         "multi" if config.multi_provider else config.ai_provider,
                         "skip", "no_fresh_book", signal_obj, kalshi_reference, False,
                         run_id=run_id, cycle_id=f"{run_id}:{cycle}",
+                        wallet_flow_reference=wallet_flow_reference,
                     )
                     continue
                 if not execution_quote.complete:
@@ -857,6 +863,7 @@ def main():
                         "multi" if config.multi_provider else config.ai_provider,
                         "skip", "insufficient_book_depth", signal_obj, kalshi_reference, False,
                         run_id=run_id, cycle_id=f"{run_id}:{cycle}",
+                        wallet_flow_reference=wallet_flow_reference,
                     )
                     continue
 
@@ -878,6 +885,7 @@ def main():
                         "multi" if config.multi_provider else config.ai_provider,
                         "skip", "edge_disappeared_at_vwap", signal_obj, kalshi_reference, False,
                         run_id=run_id, cycle_id=f"{run_id}:{cycle}",
+                        wallet_flow_reference=wallet_flow_reference,
                     )
                     continue
                 signal_obj = repriced
@@ -896,6 +904,7 @@ def main():
                         "multi" if config.multi_provider else config.ai_provider,
                         "skip", "risk_blocked", signal_obj, kalshi_reference, False,
                         run_id=run_id, cycle_id=f"{run_id}:{cycle}",
+                        wallet_flow_reference=wallet_flow_reference,
                     )
                     continue
 
@@ -940,6 +949,7 @@ def main():
                         "multi" if config.multi_provider else config.ai_provider,
                         "buy", "executed", signal_obj, kalshi_reference, False,
                         run_id=run_id, cycle_id=f"{run_id}:{cycle}",
+                        wallet_flow_reference=wallet_flow_reference,
                     )
                 else:
                     log.warning(f"  [{i}/{len(eligible)}] TRADE FAILED: order execution error")
@@ -951,6 +961,7 @@ def main():
                         "multi" if config.multi_provider else config.ai_provider,
                         "skip", "execution_failed", signal_obj, kalshi_reference, False,
                         run_id=run_id, cycle_id=f"{run_id}:{cycle}",
+                        wallet_flow_reference=wallet_flow_reference,
                     )
 
             track_resolutions(evaluated_markets, config.data_dir)

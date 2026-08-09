@@ -32,6 +32,13 @@ public sealed class BotConfig
     public double KalshiMinMatchScore { get; init; } = 0.55;
     public double KalshiLlmSameThreshold { get; init; } = 0.90;
 
+    // Optional read-only aggregate wallet-flow telemetry
+    public bool WalletFlowShadowEnabled { get; init; } = false;
+    public string WalletFlowApiHost { get; init; } = "https://data-api.polymarket.com";
+    public int WalletFlowWindowMinutes { get; init; } = 60;
+    public int WalletFlowTradesLimit { get; init; } = 500;
+    public double WalletFlowLargeTradeUsd { get; init; } = 1000.0;
+
     // AI provider
     public string AiProvider { get; init; } = "anthropic";   // selected provider for single-provider mode
     public bool MultiProvider { get; init; } = false;        // True = query ALL configured providers and aggregate
@@ -184,6 +191,11 @@ public sealed class BotConfig
             KalshiMarketsLimit = int.Parse(Cfg("kalshi_markets_limit", "KALSHI_MARKETS_LIMIT", "200")),
             KalshiMinMatchScore = double.Parse(Cfg("kalshi_min_match_score", "KALSHI_MIN_MATCH_SCORE", "0.55")),
             KalshiLlmSameThreshold = double.Parse(Cfg("kalshi_llm_same_threshold", "KALSHI_LLM_SAME_THRESHOLD", "0.90")),
+            WalletFlowShadowEnabled = Cfg("wallet_flow_shadow_enabled", "WALLET_FLOW_SHADOW_ENABLED", "false").Equals("true", StringComparison.OrdinalIgnoreCase),
+            WalletFlowApiHost = Cfg("wallet_flow_api_host", "WALLET_FLOW_API_HOST", "https://data-api.polymarket.com"),
+            WalletFlowWindowMinutes = int.Parse(Cfg("wallet_flow_window_minutes", "WALLET_FLOW_WINDOW_MINUTES", "60")),
+            WalletFlowTradesLimit = int.Parse(Cfg("wallet_flow_trades_limit", "WALLET_FLOW_TRADES_LIMIT", "500")),
+            WalletFlowLargeTradeUsd = double.Parse(Cfg("wallet_flow_large_trade_usd", "WALLET_FLOW_LARGE_TRADE_USD", "1000")),
             AiProvider = Cfg("ai_provider", "AI_PROVIDER", "anthropic"),
             MultiProvider = Cfg("multi_provider", "MULTI_PROVIDER", "false").Equals("true", StringComparison.OrdinalIgnoreCase),
             AnthropicEnabled = Cfg("anthropic_enabled", "ANTHROPIC_ENABLED", "true").Equals("true", StringComparison.OrdinalIgnoreCase),
