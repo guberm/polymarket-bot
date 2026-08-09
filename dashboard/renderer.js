@@ -4,6 +4,8 @@
 let _settings = {}
 function getSetting(key, def) { return key in _settings ? _settings[key] : def }
 function setSetting(key, val) { _settings[key] = val; api.writeSettings(_settings) }
+let notifications = []
+let notificationSequence = 0
 
 // ── Translations ──────────────────────────────────────────────────────────
 const TRANS = {
@@ -11,6 +13,12 @@ const TRANS = {
     // Header
     statusStopped: 'ОСТАНОВЛЕН', statusRunning: 'РАБОТАЕТ', statusHalted: 'ЗАМОРОЖЕН',
     configBtn: '⚙ Настройки', startBtn: '▶ Запуск', stopBtn: '■ Стоп',
+    notificationsTitle: 'Уведомления', markAllRead: 'Прочитать все',
+    emptyNotifications: 'Уведомлений пока нет', markRead: 'Отметить прочитанным', readNotification: 'Прочитано',
+    notificationBell: n => `Уведомления: ${n} непрочитанных`,
+    notificationTrade: 'Сделка выполнена', notificationVpn: 'VPN подключён',
+    notificationRisk: 'Контроль риска', notificationError: 'Ошибка',
+    notificationLifecycle: 'Состояние бота', notificationWalletFlow: 'Поток кошельков', notificationInfo: 'Событие',
     updatedAt: v => `обновлено ${v}`,
     // Stats subs
     freeCash: 'СВОБОДНЫЕ СРЕДСТВА', portfolioValue: 'СТОИМОСТЬ ПОРТФЕЛЯ',
@@ -80,6 +88,12 @@ const TRANS = {
   en: {
     statusStopped: 'STOPPED', statusRunning: 'RUNNING', statusHalted: 'HALTED',
     configBtn: '⚙ Config', startBtn: '▶ Start Bot', stopBtn: '■ Stop Bot',
+    notificationsTitle: 'Notifications', markAllRead: 'Mark all as read',
+    emptyNotifications: 'No notifications yet', markRead: 'Mark as read', readNotification: 'Read',
+    notificationBell: n => `Notifications: ${n} unread`,
+    notificationTrade: 'Trade completed', notificationVpn: 'VPN connected',
+    notificationRisk: 'Risk control', notificationError: 'Error',
+    notificationLifecycle: 'Bot status', notificationWalletFlow: 'Wallet flow', notificationInfo: 'Event',
     updatedAt: v => `updated ${v}`,
     freeCash: 'FREE CASH', portfolioValue: 'PORTFOLIO VALUE',
     realizedPnl: 'REALIZED P&L', unrealizedPnl: 'UNREALIZED P&L',
@@ -272,6 +286,125 @@ function parseTs(ts) {
   return new Date(normalized).getTime() || 0
 }
 
+function notificationTitle(kind) {
+  const key = {
+    trade: 'notificationTrade', vpn: 'notificationVpn', risk: 'notificationRisk',
+    error: 'notificationError', lifecycle: 'notificationLifecycle', wallet_flow: 'notificationWalletFlow',
+  }[kind] || 'notificationInfo'
+  return t(key)
+}
+
+function persistNotifications() {
+  setSetting('notifications', notifications)
+}
+
+function addNotification(notification) {
+  const timestamp = notification.timestamp || new Date().toISOString()
+  const id = `${parseTs(timestamp) || Date.now()}-${++notificationSequence}`
+  notifications = DashboardModel.appendNotification(notifications, { ...notification, id, timestamp }, 100)
+  persistNotifications()
+  renderNotificationCenter()
+}
+
+function renderNotificationCenter() {
+  const list = $('notification-list')
+  if (!list) return
+  const unread = DashboardModel.unreadNotificationCount(notifications)
+  const count = $('notification-unread-count')
+  count.textContent = unread > 99 ? '99+' : String(unread)
+  count.classList.toggle('hidden', unread === 0)
+  const bell = $('notification-bell')
+  bell.setAttribute('aria-label', t('notificationBell', unread))
+  bell.title = t('notificationBell', unread)
+  $('notification-mark-all').disabled = unread === 0
+
+  list.replaceChildren()
+  if (!notifications.length) {
+    const empty = document.createElement('div')
+    empty.className = 'notification-empty'
+    empty.textContent = t('emptyNotifications')
+    list.appendChild(empty)
+    return
+  }
+
+  for (const notification of notifications) {
+    const item = document.createElement('article')
+    item.className = `notification-item notification-${notification.severity || 'info'}${notification.read ? ' is-read' : ''}`
+    item.dataset.notificationId = notification.id
+
+    const dot = document.createElement('span')
+    dot.className = 'notification-dot'
+    dot.setAttribute('aria-hidden', 'true')
+
+    const content = document.createElement('div')
+    content.className = 'notification-content'
+    const meta = document.createElement('div')
+    meta.className = 'notification-meta'
+    const title = document.createElement('strong')
+    title.textContent = notificationTitle(notification.kind)
+    const time = document.createElement('time')
+    time.className = 'notification-time'
+    time.dateTime = notification.timestamp || ''
+    time.textContent = parseTs(notification.timestamp)
+      ? new Date(parseTs(notification.timestamp)).toLocaleString(currentLang === 'ru' ? 'ru-RU' : 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : ''
+    meta.append(title, time)
+
+    const detail = document.createElement('div')
+    detail.className = 'notification-detail'
+    detail.textContent = String(notification.detail || '')
+
+    const readControl = document.createElement('label')
+    readControl.className = `notification-read-control${notification.read ? ' is-complete' : ''}`
+    const checkbox = document.createElement('input')
+    checkbox.type = 'checkbox'
+    checkbox.checked = Boolean(notification.read)
+    checkbox.disabled = Boolean(notification.read)
+    checkbox.setAttribute('aria-label', t('markRead'))
+    const readLabel = document.createElement('span')
+    readLabel.textContent = notification.read ? t('readNotification') : t('markRead')
+    readControl.append(checkbox, readLabel)
+    checkbox.addEventListener('change', () => {
+      notifications = DashboardModel.markNotificationRead(notifications, notification.id)
+      persistNotifications()
+      renderNotificationCenter()
+    })
+
+    content.append(meta, detail, readControl)
+    item.append(dot, content)
+    list.appendChild(item)
+  }
+}
+
+function initNotificationCenter() {
+  const stored = getSetting('notifications', [])
+  notifications = Array.isArray(stored)
+    ? stored.filter(item => item && typeof item === 'object' && item.id && item.detail).slice(0, 100)
+    : []
+  const center = $('notification-center')
+  const bell = $('notification-bell')
+  const panel = $('notification-panel')
+  const close = () => { panel.classList.add('hidden'); bell.setAttribute('aria-expanded', 'false') }
+  bell.addEventListener('click', () => {
+    const opening = panel.classList.contains('hidden')
+    panel.classList.toggle('hidden', !opening)
+    bell.setAttribute('aria-expanded', String(opening))
+  })
+  $('notification-mark-all').addEventListener('click', () => {
+    notifications = DashboardModel.markAllNotificationsRead(notifications)
+    persistNotifications()
+    renderNotificationCenter()
+  })
+  document.addEventListener('click', event => { if (!center.contains(event.target)) close() })
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !panel.classList.contains('hidden')) {
+      close()
+      bell.focus()
+    }
+  })
+  renderNotificationCenter()
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────
 async function init() {
   _settings = (await api.readSettings()) || {}
@@ -284,6 +417,7 @@ async function init() {
 
   initTheme()
   initLang()
+  initNotificationCenter()
   initTooltips()
   initHistoryControls()
   initCharts()
@@ -297,11 +431,16 @@ async function init() {
     if (parseTs(line.timestamp) <= logClearedAt) return
     extraLogLines.push(line)
     if (extraLogLines.length > 500) extraLogLines.shift()
+    const notification = DashboardModel.notificationFromLog(line)
+    if (notification) addNotification(notification)
     renderLog()
   })
   api.onBotStopped(({ code }) => {
     botRunning = false; updateBotStatusBadge()
-    appendLogLine({ level: 'WARNING', message: t('botStopped', code), timestamp: new Date().toISOString() })
+    const timestamp = new Date().toISOString()
+    const message = t('botStopped', code)
+    appendLogLine({ level: 'WARNING', message, timestamp })
+    addNotification({ kind: 'lifecycle', severity: code === 0 || code === null ? 'info' : 'warning', detail: message, timestamp })
   })
 
   const status = await api.botStatus()
@@ -1511,7 +1650,12 @@ async function confirmStart() {
   setSetting('bot-console', consoleFl)
   closeModal('start-modal')
   const result = await api.startBot({ mode, verbose, console: consoleFl })
-  if (result.error) { alert(t('startError', result.error)); return }
+  if (result.error) {
+    const message = t('startError', result.error)
+    addNotification({ kind: 'error', severity: 'critical', detail: message, timestamp: new Date().toISOString() })
+    alert(message)
+    return
+  }
 
   // New session — clear log display so we only see this run
   logClearedAt = 0
@@ -1520,7 +1664,10 @@ async function confirmStart() {
   $('log-container').innerHTML = ''
 
   botRunning = true; updateBotStatusBadge()
-  appendLogLine({ level: 'INFO', message: t('botStarted', result.pid, mode), timestamp: new Date().toISOString() })
+  const timestamp = new Date().toISOString()
+  const message = t('botStarted', result.pid, mode)
+  appendLogLine({ level: 'INFO', message, timestamp })
+  addNotification({ kind: 'lifecycle', severity: 'info', detail: message, timestamp })
 }
 
 // ── Theme toggle ──────────────────────────────────────────────────────────
@@ -1558,6 +1705,7 @@ function initLang() {
       renderAttention()
       renderProviderHealth()
       renderHistoryChart()
+      renderNotificationCenter()
       updateLiveStartWarning()
       updateBotStatusBadge()
     })

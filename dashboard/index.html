@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; blob: *;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;">
   <title>Polymarket Bot Dashboard</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -27,6 +27,20 @@
         <span id="last-updated" class="muted small"></span>
         <button id="btn-lang" class="btn btn-ghost btn-xs" title="Switch language / Сменить язык" aria-label="Switch language">RU</button>
         <button id="btn-theme" class="btn btn-ghost" title="Переключить тему" aria-label="Toggle color theme">🌙</button>
+        <div id="notification-center" class="notification-center">
+          <button id="notification-bell" class="btn btn-ghost notification-bell" type="button"
+                  aria-haspopup="dialog" aria-expanded="false" aria-controls="notification-panel" aria-label="Уведомления">
+            <span aria-hidden="true">🔔</span>
+            <span id="notification-unread-count" class="notification-unread-count hidden" aria-hidden="true">0</span>
+          </button>
+          <section id="notification-panel" class="notification-panel hidden" role="dialog" aria-labelledby="notification-title">
+            <div class="notification-panel-header">
+              <h2 id="notification-title" data-i18n="notificationsTitle">Уведомления</h2>
+              <button id="notification-mark-all" class="btn btn-ghost btn-xs" type="button" data-i18n="markAllRead">Прочитать все</button>
+            </div>
+            <div id="notification-list" class="notification-list"></div>
+          </section>
+        </div>
         <button id="btn-config" class="btn btn-secondary" data-i18n="configBtn">⚙ Настройки</button>
         <button id="btn-start-stop" class="btn btn-success" data-i18n="startBtn">▶ Запуск</button>
       </div>

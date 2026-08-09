@@ -1,7 +1,7 @@
 'use strict'
 const assert = require('assert')
 const fs = require('fs')
-const { buildAttention, buildProviderHealth, buildHistoryPoint, buildHistorySeries, buildBotEnvironment, buildVpnLaunch, clampPaneSize, connectionMode, parseProcessLogChunk, dedupeLogs, formatLogText, toWslPath } = require('./dashboard-model')
+const { buildAttention, buildProviderHealth, buildHistoryPoint, buildHistorySeries, buildBotEnvironment, buildVpnLaunch, clampPaneSize, connectionMode, parseProcessLogChunk, dedupeLogs, formatLogText, toWslPath, notificationFromLog, appendNotification, markNotificationRead, markAllNotificationsRead, unreadNotificationCount } = require('./dashboard-model')
 
 const now = Date.parse('2026-07-31T20:00:00Z')
 const portfolio = {
@@ -134,6 +134,47 @@ assert.strictEqual(formatLogText([
   { timestamp: '2026-07-31T20:00:00Z', level: 'INFO', message: '\u001b[31mfailed\u001b[0m' },
   { timestamp: '2026-07-31T20:00:01Z', level: 'INFORMATION', message: '  failed  ' },
 ]), '2026-07-31T20:00:00Z\tINFO    \tfailed')
+
+assert.deepStrictEqual(notificationFromLog({
+  timestamp: '2026-07-31T20:00:00Z', level: 'ERROR', message: 'Provider failed',
+}), {
+  kind: 'error', severity: 'critical', timestamp: '2026-07-31T20:00:00Z', detail: 'Provider failed',
+})
+assert.strictEqual(notificationFromLog({
+  timestamp: '2026-07-31T20:00:00Z', level: 'INFO', message: 'Cycle 3 complete',
+}), null)
+assert.strictEqual(notificationFromLog({
+  timestamp: '2026-07-31T20:00:00Z', level: 'INFO', message: 'TRADE OK: YES market $5.00',
+}).kind, 'trade')
+assert.strictEqual(notificationFromLog({
+  timestamp: '2026-07-31T20:00:00Z', level: 'INFO', message: '[VPN] Tunnel ready. Bot external IP: 1.2.3.4',
+}).kind, 'vpn')
+assert.strictEqual(notificationFromLog({
+  timestamp: '2026-07-31T20:00:00Z', level: 'WARNING', message: '[VPN] ERROR: tunnel has no Internet access',
+}).kind, 'error')
+assert.strictEqual(notificationFromLog({
+  timestamp: '2026-07-31T20:00:00Z', level: 'WARNING', message: '[#] ip link add wg0 type wireguard',
+}), null)
+const walletFlowNotification = notificationFromLog({
+  timestamp: '2026-07-31T20:00:00Z', level: 'INFO',
+  message: 'Wallet-flow shadow: 12 trades, $345.67 volume, imbalance=+0.42',
+})
+assert.strictEqual(walletFlowNotification.kind, 'wallet_flow')
+assert.strictEqual(walletFlowNotification.severity, 'info')
+assert.strictEqual(notificationFromLog({
+  timestamp: '2026-07-31T20:00:00Z', level: 'INFO',
+  message: 'Wallet-flow shadow: 0 trades, $0.00 volume, imbalance=0.00',
+}), null)
+let notifications = appendNotification([], { id: 'n1', kind: 'trade', severity: 'success', timestamp: 1, detail: 'Trade' })
+notifications = appendNotification(notifications, { id: 'n2', kind: 'error', severity: 'critical', timestamp: 2, detail: 'Error' })
+assert.strictEqual(unreadNotificationCount(notifications), 2)
+notifications = markNotificationRead(notifications, 'n1')
+assert.strictEqual(unreadNotificationCount(notifications), 1)
+assert.strictEqual(notifications.find(item => item.id === 'n1').read, true)
+notifications = markAllNotificationsRead(notifications)
+assert.strictEqual(unreadNotificationCount(notifications), 0)
+assert(notifications.every(item => item.read))
+assert.strictEqual(appendNotification(notifications, { id: 'n3', kind: 'info', severity: 'info', timestamp: 3, detail: 'Info' }, 2).length, 2)
 assert(fs.readFileSync(require.resolve('./renderer.js'), 'utf8').includes('api.copyText(text)'))
 assert(fs.readFileSync(require.resolve('./preload.js'), 'utf8').includes("copyText:"))
 assert(fs.readFileSync(require.resolve('./main.js'), 'utf8').includes("ipcMain.handle('copy-text'"))
@@ -145,4 +186,13 @@ assert(fs.readFileSync(require.resolve('./renderer.js'), 'utf8').includes("key: 
 assert(fs.readFileSync(require.resolve('./renderer.js'), 'utf8').includes("['auto', 'Auto"))
 assert(fs.readFileSync(require.resolve('./preload.js'), 'utf8').includes('browseVpnConfig:'))
 assert(fs.readFileSync(require.resolve('./main.js'), 'utf8').includes("ipcMain.handle('browse-vpn-config'"))
+const dashboardHtml = fs.readFileSync(require.resolve('./index.html'), 'utf8')
+const rendererSource = fs.readFileSync(require.resolve('./renderer.js'), 'utf8')
+assert(dashboardHtml.includes('id="notification-bell"'))
+assert(dashboardHtml.includes('id="notification-unread-count"'))
+assert(dashboardHtml.includes('id="notification-list"'))
+assert(dashboardHtml.includes('id="notification-mark-all"'))
+assert(rendererSource.includes('DashboardModel.notificationFromLog'))
+assert(rendererSource.includes('DashboardModel.markNotificationRead'))
+assert(rendererSource.includes('DashboardModel.markAllNotificationsRead'))
 console.log('dashboard model self-checks passed')

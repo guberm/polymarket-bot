@@ -261,6 +261,43 @@ function formatLogText(entries = []) {
     .join('\n')
 }
 
-const dashboardModel = { buildAttention, buildProviderHealth, buildHistoryPoint, buildHistorySeries, buildBotEnvironment, buildVpnLaunch, clampPaneSize, connectionMode, parseProcessLogChunk, dedupeLogs, formatLogText, toWslPath }
+function notificationFromLog(entry = {}) {
+  const detail = cleanLogMessage(entry.message).slice(0, 240)
+  if (!detail) return null
+  const timestamp = entry.timestamp || new Date().toISOString()
+  const level = String(entry.level || '').toUpperCase()
+  const walletFlow = detail.match(/Wallet-flow shadow:\s*(\d+)\s+trades\b/i)
+  if (walletFlow && Number(walletFlow[1]) > 0)
+    return { kind: 'wallet_flow', severity: 'info', timestamp, detail }
+  if (['ERROR', 'CRITICAL'].includes(level) || /\b(?:ERROR|FAILED|FAILURE):|has no Internet access|bot was not started/i.test(detail))
+    return { kind: 'error', severity: 'critical', timestamp, detail }
+  if (/\b(TRADE OK|BUY FILLED|SELL FILLED|POSITION (?:CLOSED|RESOLVED)|RESOLVED_(?:WON|LOST))\b/i.test(detail))
+    return { kind: 'trade', severity: 'success', timestamp, detail }
+  if (/\[VPN\].*(TUNNEL READY|CONNECTED)|KILL SWITCH ACTIVE/i.test(detail))
+    return { kind: 'vpn', severity: 'success', timestamp, detail }
+  if (/\b(HALT(?:ED)?|DEAD|RISK BLOCKED|PORTFOLIO DEAD|REFUSING TO START)\b/i.test(detail))
+    return { kind: 'risk', severity: 'warning', timestamp, detail }
+  return null
+}
+
+function appendNotification(items = [], notification, limit = 100) {
+  if (!notification || !notification.id) return [...items]
+  if (items.some(item => item.id === notification.id)) return [...items]
+  return [{ ...notification, read: Boolean(notification.read) }, ...items].slice(0, Math.max(1, Number(limit) || 100))
+}
+
+function markNotificationRead(items = [], id) {
+  return items.map(item => item.id === id ? { ...item, read: true } : item)
+}
+
+function markAllNotificationsRead(items = []) {
+  return items.map(item => item.read ? item : { ...item, read: true })
+}
+
+function unreadNotificationCount(items = []) {
+  return items.reduce((count, item) => count + (item.read ? 0 : 1), 0)
+}
+
+const dashboardModel = { buildAttention, buildProviderHealth, buildHistoryPoint, buildHistorySeries, buildBotEnvironment, buildVpnLaunch, clampPaneSize, connectionMode, parseProcessLogChunk, dedupeLogs, formatLogText, toWslPath, notificationFromLog, appendNotification, markNotificationRead, markAllNotificationsRead, unreadNotificationCount }
 if (typeof module !== 'undefined') module.exports = dashboardModel
 if (typeof window !== 'undefined') window.DashboardModel = dashboardModel
