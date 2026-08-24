@@ -28,6 +28,7 @@ public sealed class Estimator
     private readonly BotConfig _config;
     private readonly HttpClient _http;
     private readonly ILogger<Estimator> _log;
+    private readonly WeatherEstimator? _weatherEstimator;
     private Dictionary<string, ProviderCalibrationStats> _calibrationStats = [];
 
     // Providers that hit 429 this cycle — skip them until ResetCycle()
@@ -47,6 +48,7 @@ public sealed class Estimator
         _config = config;
         _http = http;
         _log = log;
+        _weatherEstimator = config.WeatherEstimatorEnabled ? new WeatherEstimator(http) : null;
         RefreshCalibration();
     }
 
@@ -64,8 +66,35 @@ public sealed class Estimator
         var estimate = _config.MultiProvider
             ? await EstimateMultiAsync(market, ct)
             : await EstimateSingleAsync(market, ct);
+        if (_weatherEstimator is not null)
+            estimate = await MergeWeatherAsync(market, estimate, ct);
         if (estimate is not null) estimate.DurationSeconds = started.Elapsed.TotalSeconds;
         return estimate;
+    }
+
+    private async Task<Estimate?> MergeWeatherAsync(MarketInfo market, Estimate? estimate, CancellationToken ct)
+    {
+        var weather = await _weatherEstimator!.EstimateAsync(market, ct);
+        if (weather is null) return estimate;
+
+        var providers = estimate is null
+            ? new Dictionary<string, double>()
+            : new Dictionary<string, double>(estimate.ProviderEstimates);
+        if (estimate is not null && providers.Count == 0)
+            providers[_config.AiProvider] = estimate.FairProbability;
+        providers[WeatherEstimator.ProviderName] = weather.Probability;
+
+        var weights = CalibrationWeights.Calculate(_calibrationStats, providers.Keys.ToList(),
+            _config.CalibrationMinSamples, _config.CalibrationShrinkage, _config.CalibrationMaxProviderWeight);
+        double? weightedProbability = weights.Count == 0 ? null
+            : providers.Sum(item => item.Value * weights[item.Key]);
+        var reasoning = string.Join(" | ", new[] { estimate?.ReasoningSummary, weather.Reasoning }
+            .Where(part => !string.IsNullOrWhiteSpace(part)));
+
+        return BuildEstimate(market, providers.Values.ToList(),
+            estimate?.InputTokensUsed ?? 0, estimate?.OutputTokensUsed ?? 0, reasoning,
+            note: $"weather+ai({providers.Count})", apiCostUsd: LastApiCostUsd,
+            providerEstimates: providers, fairProbabilityOverride: weightedProbability);
     }
 
     public async Task<VerificationResult?> VerifyMarketEquivalenceAsync(
@@ -249,6 +278,7 @@ public sealed class Estimator
         "gemini"       => !string.IsNullOrEmpty(_config.GeminiModel)     ? _config.GeminiModel     : "gemini-2.0-flash",
         "openrouter"   => _config.OpenRouterModel,
         "azure_openai" => _config.AzureOpenAiDeployment,
+        WeatherEstimator.ProviderName => WeatherEstimator.ModelName,
         _              => _config.AnthropicModel,
     };
 

@@ -76,6 +76,7 @@ public sealed class BotConfig
     public double EnsembleTemperature { get; init; } = 0.7;
     public int MaxEstimateTokens { get; init; } = 1024;
     public double MaxEstimateStd { get; init; } = 0.10;
+    public bool WeatherEstimatorEnabled { get; init; } = false;
     public bool LlmCostTrackingEnabled { get; init; } = true;
     public double MaxCycleApiCostUsd { get; init; } = 1.00;
     public double MaxDailyApiCostUsd { get; init; } = 10.00;
@@ -223,6 +224,7 @@ public sealed class BotConfig
             EnsembleTemperature = double.Parse(Cfg("ensemble_temperature", "ENSEMBLE_TEMPERATURE", "0.7")),
             MaxEstimateTokens = int.Parse(Cfg("max_estimate_tokens", "MAX_ESTIMATE_TOKENS", "1024")),
             MaxEstimateStd = double.Parse(Cfg("max_estimate_std", "MAX_ESTIMATE_STD", "0.10")),
+            WeatherEstimatorEnabled = Cfg("weather_estimator_enabled", "WEATHER_ESTIMATOR_ENABLED", "false").Equals("true", StringComparison.OrdinalIgnoreCase),
             LlmCostTrackingEnabled = Cfg("llm_cost_tracking_enabled", "LLM_COST_TRACKING_ENABLED", "true").Equals("true", StringComparison.OrdinalIgnoreCase),
             MaxCycleApiCostUsd = double.Parse(Cfg("max_cycle_api_cost_usd", "MAX_CYCLE_API_COST_USD", "1.00")),
             MaxDailyApiCostUsd = double.Parse(Cfg("max_daily_api_cost_usd", "MAX_DAILY_API_COST_USD", "10.00")),

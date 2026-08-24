@@ -484,6 +484,36 @@ var untrackedEstimator = new Estimator(new BotConfig
 if (await untrackedEstimator.EstimateAsync(watchMarket) is not null || untrackedEstimator.LastApiCostUsd != 0)
     throw new Exception("Disabled LLM cost tracking still recorded spend");
 
+Near(.6, WeatherEstimator.ProbabilityForRange([79.4, 79.6, 80.4, 81.4, 81.6], 80, 81));
+Near(2.0 / 3, WeatherEstimator.ProbabilityForRange([72.4, 73.4, 73.6], null, 73));
+Near(2.0 / 3, WeatherEstimator.ProbabilityForRange([91.4, 91.6, 92.4], 92, null));
+
+var weatherDay = DateOnly.FromDateTime(DateTime.UtcNow);
+var weatherMarket = new MarketInfo
+{
+    ConditionId = "weather", Question = $"Will the highest temperature in NYC be between 80-81°F on {weatherDay:MMMM d}?",
+    Slug = "nyc-temperature", TokenIdYes = "yes", TokenIdNo = "no", OutcomeYesPrice = .5, OutcomeNoPrice = .5,
+    Category = "weather", EventTitle = "NYC daily temperature",
+    Description = "https://www.weather.gov/wrh/timeseries?site=klga",
+    EndDate = weatherDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc).ToString("o"),
+};
+var weatherHandler = new WeatherMergeHandler();
+using (var weatherHttp = new HttpClient(weatherHandler))
+{
+    var weatherEstimator = new Estimator(new BotConfig
+    {
+        AiProvider = "openai", OpenAiApiKey = "test", EnsembleSize = 1,
+        WeatherEstimatorEnabled = true,
+    }, weatherHttp, loggerFactory.CreateLogger<Estimator>());
+    var weatherEstimate = await weatherEstimator.EstimateAsync(weatherMarket)
+        ?? throw new Exception("Weather-enabled estimator returned no result");
+    if (!weatherEstimate.ProviderEstimates.ContainsKey(WeatherEstimator.ProviderName) ||
+        weatherEstimate.ProviderModels.GetValueOrDefault(WeatherEstimator.ProviderName) != WeatherEstimator.ModelName)
+        throw new Exception("Weather estimate was not merged with provider provenance");
+    if (!weatherHandler.SawTimezoneAuto)
+        throw new Exception("Weather estimator must request local-day aggregation with timezone=auto");
+}
+
 var concurrentHandler = new ConcurrentResponseHandler();
 using var concurrentHttp = new HttpClient(concurrentHandler);
 var concurrentEstimator = new Estimator(new BotConfig
@@ -552,6 +582,21 @@ sealed class StaticResponseHandler(string body) : HttpMessageHandler
 {
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
+}
+
+sealed class WeatherMergeHandler : HttpMessageHandler
+{
+    public bool SawTimezoneAuto { get; private set; }
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        if (request.RequestUri!.Host.Equals("ensemble-api.open-meteo.com", StringComparison.OrdinalIgnoreCase))
+            SawTimezoneAuto = request.RequestUri.Query.Contains("timezone=auto", StringComparison.OrdinalIgnoreCase);
+        var body = request.RequestUri!.Host.Equals("ensemble-api.open-meteo.com", StringComparison.OrdinalIgnoreCase)
+            ? """{"daily":{"temperature_2m_max_member01":[79.4],"temperature_2m_max_member02":[79.6],"temperature_2m_max_member03":[80.1],"temperature_2m_max_member04":[80.4],"temperature_2m_max_member05":[81.1],"temperature_2m_max_member06":[81.4],"temperature_2m_max_member07":[81.6],"temperature_2m_max_member08":[82.0],"temperature_2m_max_member09":[82.4],"temperature_2m_max_member10":[78.0]}}"""
+            : """{"choices":[{"message":{"content":"{\"probability\":0.5,\"reasoning\":\"ai\"}"}}],"usage":{"prompt_tokens":2,"completion_tokens":1}}""";
+        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
+    }
 }
 
 sealed class ThrowingResponseHandler : HttpMessageHandler

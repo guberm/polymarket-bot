@@ -31,6 +31,7 @@ from api_pricing import calculate_api_cost
 from calibration import calibration_weights, load_provider_stats
 from models import MarketInfo, Estimate
 from runtime_safety import retry_delay_seconds
+from weather_estimator import MODEL_NAME as WEATHER_MODEL, PROVIDER_NAME as WEATHER_PROVIDER, WeatherEstimator
 
 log = logging.getLogger("bot.estimator")
 
@@ -76,6 +77,7 @@ class Estimator:
         self._provider_open_until: dict[str, float] = {}
         self._calibration_stats = {}
         self._refresh_calibration()
+        self._weather_estimator = WeatherEstimator() if config.weather_estimator_enabled else None
 
         # Initialize Anthropic client whenever the key is present (single + multi-provider)
         if config.anthropic_api_key and _anthropic is not None:
@@ -104,9 +106,36 @@ class Estimator:
         started = time.monotonic()
         self.last_api_cost_usd = 0.0
         result = self._estimate_multi(market) if self.config.multi_provider else self._estimate_single(market)
+        if self._weather_estimator is not None:
+            result = self._merge_weather(market, result)
         if result is not None:
             result.duration_seconds = time.monotonic() - started
         return result
+
+    def _merge_weather(self, market: MarketInfo, result: Optional[Estimate]) -> Optional[Estimate]:
+        weather = self._weather_estimator.estimate(market)
+        if weather is None:
+            return result
+        providers = dict(result.provider_estimates) if result is not None else {}
+        if result is not None and not providers:
+            providers[self._provider] = result.fair_probability
+        providers[WEATHER_PROVIDER] = weather.probability
+        weights = calibration_weights(
+            self._calibration_stats, list(providers), self.config.calibration_min_samples,
+            self.config.calibration_shrinkage, self.config.calibration_max_provider_weight,
+        )
+        weighted_probability = sum(
+            probability * weights[provider] for provider, probability in providers.items()
+        ) if weights else None
+        reasoning = " | ".join(
+            part for part in [result.reasoning_summary if result else "", weather.reasoning] if part
+        )
+        return self._build_estimate(
+            market, list(providers.values()),
+            result.input_tokens_used if result else 0, result.output_tokens_used if result else 0,
+            reasoning, note=f"weather+ai({len(providers)})", api_cost_usd=self.last_api_cost_usd,
+            provider_estimates=providers, fair_probability_override=weighted_probability,
+        )
 
     def verify_market_equivalence(self, market: MarketInfo, kalshi: dict):
         """Use one provider call to estimate whether two resolution criteria are equivalent."""
@@ -312,6 +341,7 @@ class Estimator:
             "gemini":       c.gemini_model,
             "openrouter":   c.openrouter_model,
             "azure_openai": c.azure_openai_deployment,
+            WEATHER_PROVIDER: WEATHER_MODEL,
         }
         return per_provider.get(provider) or self._PROVIDER_DEFAULTS.get(provider, "")
 

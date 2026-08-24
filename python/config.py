@@ -85,6 +85,7 @@ class BotConfig:
     # AI provider
     ai_provider: str = "anthropic"   # selected provider for single-provider mode
     multi_provider: bool = False     # True = query ALL configured providers and aggregate
+    weather_estimator_enabled: bool = False
 
     # Per-provider credentials + models
     # Anthropic
@@ -239,6 +240,7 @@ class BotConfig:
             wallet_flow_large_trade_usd=get("wallet_flow_large_trade_usd", 1000.0),
             ai_provider=get("ai_provider", "anthropic"),
             multi_provider=get("multi_provider", False),
+            weather_estimator_enabled=get("weather_estimator_enabled", False),
             anthropic_enabled=get("anthropic_enabled", True),
             anthropic_api_key=get("anthropic_api_key", ""),
             anthropic_api_host=get("anthropic_api_host", "https://api.anthropic.com"),

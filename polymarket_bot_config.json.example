@@ -117,6 +117,7 @@
   "ensemble_temperature": 0.7,
   "max_estimate_tokens": 1024,
   "max_estimate_std": 0.10,
+  "weather_estimator_enabled": false,
   "llm_cost_tracking_enabled": true,
   "max_cycle_api_cost_usd": 1.00,
   "max_daily_api_cost_usd": 10.00,
